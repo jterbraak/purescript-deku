@@ -2,6 +2,7 @@ module Deku.Core where
 
 import Prelude
 
+import Data.Array.NonEmpty (NonEmptyArray)
 import Data.Function (on)
 import Data.Generic.Rep (class Generic)
 import Data.Newtype (class Newtype, unwrap)
@@ -85,13 +86,16 @@ instance showAudioWorkletNodeOptions_ :: Show AudioWorkletNodeOptions_ where
     <> JSON.writeJSON a.numberOfInputs
     <> " >"
 
-newtype Node event payload = Node
+newtype Node outputChannels produced consumed event payload = Node
   (String -> AudioInterpret event payload -> event payload)
 
-type Subgraph index env event payload =
+newtype GainInput outputChannels produced consumed event payload = GainInput
+  (NonEmptyArray (Node outputChannels produced consumed event payload))
+
+type Subgraph index env outputChannels produced consumed event payload =
   index
   -> event env
-  -> Node event payload
+  -> Node outputChannels produced consumed event payload
 
 newtype Transition = Transition
   (Variant (linear :: Unit, exponential :: Unit, step :: Unit))
@@ -171,7 +175,6 @@ derive instance ordAudioOnOff :: Ord AudioOnOff
 derive instance newtypeAudioOnOff :: Newtype AudioOnOff _
 derive instance genericAudioOnOff :: Generic AudioOnOff _
 
-
 newtype RealImg = RealImg { real :: Array Number, img :: Array Number }
 derive instance newtypeRealImg :: Newtype RealImg _
 derive instance eqRealImg :: Eq RealImg
@@ -219,18 +222,54 @@ instance showOversample :: Show Oversample where
   show = genericShow
 --
 
-type ConnectXToY = { fromId :: String, toId :: String, fromUnit :: String, toUnit :: String }
-type DisconnectXFromY = { fromId :: String, toId :: String, fromUnit :: String, toUnit :: String }
+type ConnectXToY = { from :: String, to :: String }
+type DisconnectXFromY = { from :: String, to :: String }
 type DestroyUnit = { id :: String, unit :: String }
+newtype Allpass = Allpass
+  ( Variant
+      ( frequency :: AudioParameter
+      , q :: AudioParameter
+      )
+  )
+type InitializeAllpass =
+  { frequency :: AudioParameter
+  , q :: AudioParameter
+  }
 type MakeAllpass =
   { id :: String
   , parent :: String
   , frequency :: AudioParameter
   , q :: AudioParameter
   }
+newtype Analyser = Analyser (Variant (cb :: AnalyserNodeCb))
+type InitializeAnalyser = { cb :: AnalyserNodeCb }
 type MakeAnalyser = { id :: String, parent :: String, cb :: AnalyserNodeCb }
+newtype AudioWorkletNode parameterData = AudioWorkletNode
+  (Variant parameterData)
+type InitializeAudioWorkletNode
+  numberOfInputs
+  numberOfOutputs
+  outputChannelCount
+  parameterData
+  processorOptions =
+  { numberOfInputs :: numberOfInputs
+  , numberOfOutputs :: numberOfOutputs
+  , outputChannelCount :: outputChannelCount
+  , parameterData :: { | parameterData }
+  , processorOptions :: { | processorOptions }
+  }
 type MakeAudioWorkletNode =
-  { id :: String, options :: AudioWorkletNodeOptions_ }
+  { id :: String, parent :: String, options :: AudioWorkletNodeOptions_ }
+newtype Bandpass = Bandpass
+  ( Variant
+      ( frequency :: AudioParameter
+      , q :: AudioParameter
+      )
+  )
+type InitializeBandpass =
+  { frequency :: AudioParameter
+  , q :: AudioParameter
+  }
 type MakeBandpass =
   { id :: String
   , parent :: String
@@ -251,6 +290,8 @@ type MakeDynamicsCompressor =
   , attack :: AudioParameter
   , release :: AudioParameter
   }
+newtype Gain = Gain (Variant (gain :: AudioParameter))
+type InitializeGain = { gain :: AudioParameter }
 type MakeGain = { id :: String, parent :: String, gain :: AudioParameter }
 type MakeHighpass =
   { id :: String
@@ -291,7 +332,8 @@ type MakeMediaElement =
   , parent :: String
   , element :: BrowserMediaElement
   }
-type MakeMicrophone = { id :: String, microphone :: BrowserMicrophone, parent :: String }
+type MakeMicrophone =
+  { id :: String, microphone :: BrowserMicrophone, parent :: String }
 type MakeNotch =
   { id :: String
   , parent :: String
@@ -329,6 +371,12 @@ type MakeSawtoothOsc =
   , onOff :: AudioOnOff
   , frequency :: AudioParameter
   }
+newtype SinOsc = SinOsc
+  (Variant (frequency :: AudioParameter, onOff :: AudioOnOff))
+type InitializeSinOsc =
+  { onOff :: AudioOnOff
+  , frequency :: AudioParameter
+  }
 type MakeSinOsc =
   { id :: String
   , parent :: String
@@ -361,10 +409,17 @@ type MakeTumult =
   , terminus :: String
   , instructions :: Array (Array Instruction)
   }
-type MakeSubgraph index env event payload =
+type MakeSubgraph
+  index
+  env
+  (outputChannels :: Type)
+  (produced :: Row Type)
+  (consumed :: Row Type)
+  event
+  payload =
   { id :: String
   , parent :: String
-  , scenes :: Subgraph index env event payload
+  , scenes :: Subgraph index env outputChannels produced consumed event payload
   }
 type InsertOrUpdateSubgraph index env =
   { id :: String
@@ -381,7 +436,6 @@ type SetAnalyserNodeCb = { id :: String, cb :: AnalyserNodeCb }
 type SetMediaRecorderCb = { id :: String, cb :: MediaRecorderCb }
 type SetAudioWorkletParameter =
   { id :: String, paramName :: String, paramValue :: AudioParameter }
-
 type SetBuffer = { id :: String, buffer :: BrowserAudioBuffer }
 type SetConvolverBuffer = { id :: String, buffer :: BrowserAudioBuffer }
 type SetPeriodicOsc = { id :: String, periodicOsc :: PeriodicOscSpec }
@@ -441,8 +495,8 @@ newtype AudioInterpret event payload = AudioInterpret
   , makeSquareOsc :: MakeSquareOsc -> payload
   , makeStereoPanner :: MakeStereoPanner -> payload
   , makeSubgraph ::
-      forall index env
-       . MakeSubgraph index env event payload
+      forall index env outputChannels produced consumed
+       . MakeSubgraph index env outputChannels produced consumed event payload
       -> payload
   , makeTriangleOsc :: MakeTriangleOsc -> payload
   , makeTumult :: MakeTumult -> payload
@@ -513,7 +567,8 @@ type Instruction' =
   , makeTriangleOsc :: MakeTriangleOsc
   , makeWaveShaper :: MakeWaveShaper
   , makeSubgraph ::
-      forall index env event payload. MakeSubgraph index env event payload
+      forall index env outputChannels produced consumed event payload
+       . MakeSubgraph index env outputChannels produced consumed event payload
   , makeTumult :: MakeTumult
   , connectXToY :: ConnectXToY
   , destroyUnit :: DestroyUnit
@@ -552,131 +607,131 @@ newtype Instruction = Instruction (Variant Instruction')
 instructionWeight :: Instruction -> Int
 instructionWeight (Instruction v) = v # match
   { makeAllpass: const 2
-  , makeAnalyser :const 2
-  , makeAudioWorkletNode :const 2
-  , makeBandpass :const 2
-  , makeConstant :const 2
-  , makeConvolver :const 2
-  , makeDelay :const 2
-  , makeDynamicsCompressor :const 2
-  , makeGain :const 2
-  , makeHighpass :const 2
-  , makeHighshelf :const 2
-  , makeInput :const 2
-  , makeLoopBuf :const 2
-  , makeLowpass :const 2
-  , makeLowshelf :const 2
-  , makeMediaElement :const 2
-  , makeMicrophone :const 2
-  , makeNotch :const 2
-  , makePeaking :const 2
-  , makePeriodicOsc :const 2
-  , makePlayBuf :const 2
-  , makeRecorder :const 2
-  , makeSawtoothOsc :const 2
-  , makeSinOsc :const 2
-  , makeSquareOsc :const 2
-  , makeSpeaker :const 2
-  , makeStereoPanner :const 2
-  , makeTriangleOsc :const 2
-  , makeWaveShaper :const 2
-  , makeSubgraph :const 3
-  , makeTumult :const 4
-  , connectXToY :const 5
+  , makeAnalyser: const 2
+  , makeAudioWorkletNode: const 2
+  , makeBandpass: const 2
+  , makeConstant: const 2
+  , makeConvolver: const 2
+  , makeDelay: const 2
+  , makeDynamicsCompressor: const 2
+  , makeGain: const 2
+  , makeHighpass: const 2
+  , makeHighshelf: const 2
+  , makeInput: const 2
+  , makeLoopBuf: const 2
+  , makeLowpass: const 2
+  , makeLowshelf: const 2
+  , makeMediaElement: const 2
+  , makeMicrophone: const 2
+  , makeNotch: const 2
+  , makePeaking: const 2
+  , makePeriodicOsc: const 2
+  , makePlayBuf: const 2
+  , makeRecorder: const 2
+  , makeSawtoothOsc: const 2
+  , makeSinOsc: const 2
+  , makeSquareOsc: const 2
+  , makeSpeaker: const 2
+  , makeStereoPanner: const 2
+  , makeTriangleOsc: const 2
+  , makeWaveShaper: const 2
+  , makeSubgraph: const 3
+  , makeTumult: const 4
+  , connectXToY: const 5
   , disconnectXFromY: const 0
   , destroyUnit: const 1
-  , setAnalyserNodeCb :const 6
-  , setMediaRecorderCb :const 6
-  , setAudioWorkletParameter :const 6
-  , setBuffer :const 6
-  , setConvolverBuffer :const 6
-  , setPeriodicOsc :const 6
-  , setOnOff :const 6
-  , setBufferOffset :const 6
-  , setLoopStart :const 6
-  , setLoopEnd :const 6
-  , setRatio :const 6
-  , setOffset :const 6
-  , setAttack :const 6
-  , setGain :const 6
-  , setQ :const 6
-  , setPan :const 6
-  , setThreshold :const 6
-  , setRelease :const 6
-  , setKnee :const 6
-  , setDelay :const 6
-  , setPlaybackRate :const 6
-  , setFrequency :const 6
-  , setWaveShaperCurve :const 6
-  , setInput :const 6
-  , removeSubgraph :const 7
-  , insertOrUpdateSubgraph :const 8
-  , setTumult :const 9
+  , setAnalyserNodeCb: const 6
+  , setMediaRecorderCb: const 6
+  , setAudioWorkletParameter: const 6
+  , setBuffer: const 6
+  , setConvolverBuffer: const 6
+  , setPeriodicOsc: const 6
+  , setOnOff: const 6
+  , setBufferOffset: const 6
+  , setLoopStart: const 6
+  , setLoopEnd: const 6
+  , setRatio: const 6
+  , setOffset: const 6
+  , setAttack: const 6
+  , setGain: const 6
+  , setQ: const 6
+  , setPan: const 6
+  , setThreshold: const 6
+  , setRelease: const 6
+  , setKnee: const 6
+  , setDelay: const 6
+  , setPlaybackRate: const 6
+  , setFrequency: const 6
+  , setWaveShaperCurve: const 6
+  , setInput: const 6
+  , removeSubgraph: const 7
+  , insertOrUpdateSubgraph: const 8
+  , setTumult: const 9
   }
 
 instructionId :: Instruction -> String
 instructionId (Instruction v) = v # match
   { makeAllpass: _.id
-  , makeAnalyser :_.id
-  , makeAudioWorkletNode :_.id
-  , makeBandpass :_.id
-  , makeConstant :_.id
-  , makeConvolver :_.id
-  , makeDelay :_.id
-  , makeDynamicsCompressor :_.id
-  , makeGain :_.id
-  , makeHighpass :_.id
-  , makeHighshelf :_.id
-  , makeInput :_.id
-  , makeLoopBuf :_.id
-  , makeLowpass :_.id
-  , makeLowshelf :_.id
-  , makeMediaElement :_.id
-  , makeMicrophone :_.id
-  , makeNotch :_.id
-  , makePeaking :_.id
-  , makePeriodicOsc :_.id
-  , makePlayBuf :_.id
-  , makeRecorder :_.id
-  , makeSawtoothOsc :_.id
-  , makeSinOsc :_.id
-  , makeSquareOsc :_.id
-  , makeSpeaker : _.id
-  , makeStereoPanner :_.id
-  , makeTriangleOsc :_.id
-  , makeWaveShaper :_.id
-  , makeSubgraph :_.id
-  , makeTumult :_.id
-  , connectXToY :_.fromId
-  , disconnectXFromY :_.fromId
-  , destroyUnit :_.id
-  , setAnalyserNodeCb :_.id
-  , setMediaRecorderCb :_.id
-  , setAudioWorkletParameter :_.id
-  , setBuffer :_.id
-  , setConvolverBuffer :_.id
-  , setPeriodicOsc :_.id
-  , setOnOff :_.id
-  , setBufferOffset :_.id
-  , setLoopStart :_.id
-  , setLoopEnd :_.id
-  , setRatio :_.id
-  , setOffset :_.id
-  , setAttack :_.id
-  , setGain :_.id
-  , setQ :_.id
-  , setPan :_.id
-  , setThreshold :_.id
-  , setRelease :_.id
-  , setKnee :_.id
-  , setDelay :_.id
-  , setPlaybackRate :_.id
-  , setFrequency :_.id
-  , setWaveShaperCurve :_.id
-  , setInput :_.id
-  , removeSubgraph :_.id
-  , insertOrUpdateSubgraph :_.id
-  , setTumult :_.id
+  , makeAnalyser: _.id
+  , makeAudioWorkletNode: _.id
+  , makeBandpass: _.id
+  , makeConstant: _.id
+  , makeConvolver: _.id
+  , makeDelay: _.id
+  , makeDynamicsCompressor: _.id
+  , makeGain: _.id
+  , makeHighpass: _.id
+  , makeHighshelf: _.id
+  , makeInput: _.id
+  , makeLoopBuf: _.id
+  , makeLowpass: _.id
+  , makeLowshelf: _.id
+  , makeMediaElement: _.id
+  , makeMicrophone: _.id
+  , makeNotch: _.id
+  , makePeaking: _.id
+  , makePeriodicOsc: _.id
+  , makePlayBuf: _.id
+  , makeRecorder: _.id
+  , makeSawtoothOsc: _.id
+  , makeSinOsc: _.id
+  , makeSquareOsc: _.id
+  , makeSpeaker: _.id
+  , makeStereoPanner: _.id
+  , makeTriangleOsc: _.id
+  , makeWaveShaper: _.id
+  , makeSubgraph: _.id
+  , makeTumult: _.id
+  , connectXToY: _.from
+  , disconnectXFromY: _.from
+  , destroyUnit: _.id
+  , setAnalyserNodeCb: _.id
+  , setMediaRecorderCb: _.id
+  , setAudioWorkletParameter: _.id
+  , setBuffer: _.id
+  , setConvolverBuffer: _.id
+  , setPeriodicOsc: _.id
+  , setOnOff: _.id
+  , setBufferOffset: _.id
+  , setLoopStart: _.id
+  , setLoopEnd: _.id
+  , setRatio: _.id
+  , setOffset: _.id
+  , setAttack: _.id
+  , setGain: _.id
+  , setQ: _.id
+  , setPan: _.id
+  , setThreshold: _.id
+  , setRelease: _.id
+  , setKnee: _.id
+  , setDelay: _.id
+  , setPlaybackRate: _.id
+  , setFrequency: _.id
+  , setWaveShaperCurve: _.id
+  , setInput: _.id
+  , removeSubgraph: _.id
+  , insertOrUpdateSubgraph: _.id
+  , setTumult: _.id
   }
 
 instance eqInstruction :: Eq Instruction where

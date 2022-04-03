@@ -14,6 +14,7 @@
   , "foldable-traversable"
   , "foreign"
   , "foreign-object"
+  , "homogeneous"
   , "lists"
   , "maybe"
   , "newtype"
