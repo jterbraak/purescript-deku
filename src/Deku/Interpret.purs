@@ -9,7 +9,7 @@ import Prelude
 
 import Control.Alt ((<|>))
 import Data.Either (Either(..))
-import Deku.Core (Element(..))
+import Deku.Core (Node(..))
 import Deku.Core as Core
 import Effect (Effect)
 import Effect.Random as R

@@ -6,11 +6,13 @@ import Data.Array.NonEmpty (NonEmptyArray)
 import Data.Function (on)
 import Data.Generic.Rep (class Generic)
 import Data.Newtype (class Newtype, unwrap)
+import Data.Set (Set)
 import Data.Show.Generic (genericShow)
 import Data.Variant (Variant, inj, match)
 import Data.Variant.Maybe (Maybe)
 import Deku.WebAPI (AnalyserNodeCb, BrowserAudioBuffer, BrowserFloatArray, BrowserMediaElement, BrowserMicrophone, BrowserPeriodicWave, MediaRecorderCb)
 import FRP.Behavior (ABehavior)
+import FRP.Event.Pure (PureEvent)
 import Foreign (Foreign)
 import Foreign.Object (Object)
 import Simple.JSON as JSON
@@ -247,12 +249,14 @@ type MakeAnalyser = { id :: String, parent :: String, cb :: AnalyserNodeCb }
 newtype AudioWorkletNode parameterData = AudioWorkletNode
   (Variant parameterData)
 type InitializeAudioWorkletNode
+  (name :: Symbol)
   numberOfInputs
   numberOfOutputs
   outputChannelCount
   parameterData
   processorOptions =
-  { numberOfInputs :: numberOfInputs
+  { name :: Proxy name
+  , numberOfInputs :: numberOfInputs
   , numberOfOutputs :: numberOfOutputs
   , outputChannelCount :: outputChannelCount
   , parameterData :: { | parameterData }
@@ -276,11 +280,37 @@ type MakeBandpass =
   , frequency :: AudioParameter
   , q :: AudioParameter
   }
+newtype Constant = Constant
+  (Variant (offset :: AudioParameter, onOff :: AudioOnOff))
+type InitializeConstant = { offset :: AudioParameter, onOff :: AudioOnOff }
 type MakeConstant =
-  { id :: String, parent :: String, offset :: AudioParameter }
+  { id :: String
+  , parent :: String
+  , offset :: AudioParameter
+  , onOff :: AudioOnOff
+  }
+type InitializeConvolver = { buffer :: BrowserAudioBuffer }
 type MakeConvolver =
   { id :: String, parent :: String, buffer :: BrowserAudioBuffer }
+newtype Delay = Delay (Variant (delayTime :: AudioParameter))
+type InitializeDelay = { delayTime :: AudioParameter }
 type MakeDelay = { id :: String, parent :: String, delayTime :: AudioParameter }
+newtype DynamicsCompressor = DynamicsCompressor
+  ( Variant
+      ( threshold :: AudioParameter
+      , knee :: AudioParameter
+      , ratio :: AudioParameter
+      , attack :: AudioParameter
+      , release :: AudioParameter
+      )
+  )
+type InitializeDynamicsCompressor =
+  { threshold :: AudioParameter
+  , knee :: AudioParameter
+  , ratio :: AudioParameter
+  , attack :: AudioParameter
+  , release :: AudioParameter
+  }
 type MakeDynamicsCompressor =
   { id :: String
   , parent :: String
@@ -293,11 +323,31 @@ type MakeDynamicsCompressor =
 newtype Gain = Gain (Variant (gain :: AudioParameter))
 type InitializeGain = { gain :: AudioParameter }
 type MakeGain = { id :: String, parent :: String, gain :: AudioParameter }
+newtype Highpass = Highpass
+  ( Variant
+      ( frequency :: AudioParameter
+      , q :: AudioParameter
+      )
+  )
+type InitializeHighpass =
+  { frequency :: AudioParameter
+  , q :: AudioParameter
+  }
 type MakeHighpass =
   { id :: String
   , parent :: String
   , frequency :: AudioParameter
   , q :: AudioParameter
+  }
+newtype Highshelf = Highshelf
+  ( Variant
+      ( frequency :: AudioParameter
+      , gain :: AudioParameter
+      )
+  )
+type InitializeHighshelf =
+  { frequency :: AudioParameter
+  , gain :: AudioParameter
   }
 type MakeHighshelf =
   { id :: String
@@ -306,6 +356,24 @@ type MakeHighshelf =
   , gain :: AudioParameter
   }
 type MakeInput = { id :: String, parent :: String, input :: String }
+newtype LoopBuf = LoopBuf
+  ( Variant
+      ( buffer :: BrowserAudioBuffer
+      , onOff :: AudioOnOff
+      , playbackRate :: AudioParameter
+      , loopStart :: Number
+      , loopEnd :: Number
+      )
+  )
+type InitializeLoopBuf =
+  { buffer :: BrowserAudioBuffer
+  , onOff :: AudioOnOff
+  , playbackRate :: AudioParameter
+  , loopStart :: Number
+  , loopEnd :: Number
+  -- duration in initializer but not setter for now
+  , duration :: Maybe Number
+  }
 type MakeLoopBuf =
   { id :: String
   , parent :: String
@@ -314,6 +382,17 @@ type MakeLoopBuf =
   , playbackRate :: AudioParameter
   , loopStart :: Number
   , loopEnd :: Number
+  , duration :: Maybe Number
+  }
+newtype Lowpass = Lowpass
+  ( Variant
+      ( frequency :: AudioParameter
+      , q :: AudioParameter
+      )
+  )
+type InitializeLowpass =
+  { frequency :: AudioParameter
+  , q :: AudioParameter
   }
 type MakeLowpass =
   { id :: String
@@ -321,24 +400,61 @@ type MakeLowpass =
   , frequency :: AudioParameter
   , q :: AudioParameter
   }
+newtype Lowshelf = Lowshelf
+  ( Variant
+      ( frequency :: AudioParameter
+      , gain :: AudioParameter
+      )
+  )
+type InitializeLowshelf =
+  { frequency :: AudioParameter
+  , gain :: AudioParameter
+  }
 type MakeLowshelf =
   { id :: String
   , parent :: String
   , frequency :: AudioParameter
   , gain :: AudioParameter
   }
+type InitializeMediaElement =
+  { element :: BrowserMediaElement
+  }
 type MakeMediaElement =
   { id :: String
   , parent :: String
   , element :: BrowserMediaElement
   }
+type InitializeMicrophone =
+  { microphone :: BrowserMicrophone, parent :: String }
 type MakeMicrophone =
   { id :: String, microphone :: BrowserMicrophone, parent :: String }
+newtype Notch = Notch
+  ( Variant
+      ( frequency :: AudioParameter
+      , q :: AudioParameter
+      )
+  )
+type InitializeNotch =
+  { frequency :: AudioParameter
+  , q :: AudioParameter
+  }
 type MakeNotch =
   { id :: String
   , parent :: String
   , frequency :: AudioParameter
   , q :: AudioParameter
+  }
+newtype Peaking = Peaking
+  ( Variant
+      ( frequency :: AudioParameter
+      , q :: AudioParameter
+      , gain :: AudioParameter
+      )
+  )
+type InitializePeaking =
+  { frequency :: AudioParameter
+  , q :: AudioParameter
+  , gain :: AudioParameter
   }
 type MakePeaking =
   { id :: String
@@ -347,12 +463,41 @@ type MakePeaking =
   , q :: AudioParameter
   , gain :: AudioParameter
   }
+newtype PeriodicOsc =
+  PeriodicOsc
+    ( Variant
+        ( spec :: PeriodicOscSpec
+        , onOff :: AudioOnOff
+        , frequency :: AudioParameter
+        )
+    )
+type InitializePeriodicOsc =
+  { spec :: PeriodicOscSpec
+  , onOff :: AudioOnOff
+  , frequency :: AudioParameter
+  }
 type MakePeriodicOsc =
   { id :: String
   , parent :: String
   , spec :: PeriodicOscSpec
   , onOff :: AudioOnOff
   , frequency :: AudioParameter
+  }
+newtype PlayBuf =
+  PlayBuf
+    ( Variant
+        ( buffer :: BrowserAudioBuffer
+        , bufferOffset :: Number
+        , onOff :: AudioOnOff
+        , playbackRate :: AudioParameter
+        )
+    )
+type InitializePlayBuf =
+  { buffer :: BrowserAudioBuffer
+  , bufferOffset :: Number
+  , onOff :: AudioOnOff
+  , playbackRate :: AudioParameter
+  , duration :: Maybe Number
   }
 type MakePlayBuf =
   { id :: String
@@ -363,8 +508,20 @@ type MakePlayBuf =
   , playbackRate :: AudioParameter
   , duration :: Maybe Number
   }
+type InitializeRecorder = { cb :: MediaRecorderCb }
 type MakeRecorder = { id :: String, parent :: String, cb :: MediaRecorderCb }
 type MakeSpeaker = { id :: String }
+newtype SawtoothOsc =
+  SawtoothOsc
+    ( Variant
+        ( onOff :: AudioOnOff
+        , frequency :: AudioParameter
+        )
+    )
+type InitializeSawtoothOsc =
+  { onOff :: AudioOnOff
+  , frequency :: AudioParameter
+  }
 type MakeSawtoothOsc =
   { id :: String
   , parent :: String
@@ -383,19 +540,49 @@ type MakeSinOsc =
   , onOff :: AudioOnOff
   , frequency :: AudioParameter
   }
+newtype SquareOsc =
+  SquareOsc
+    ( Variant
+        ( onOff :: AudioOnOff
+        , frequency :: AudioParameter
+        )
+    )
+type InitializeSquareOsc =
+  { onOff :: AudioOnOff
+  , frequency :: AudioParameter
+  }
 type MakeSquareOsc =
   { id :: String
   , parent :: String
   , onOff :: AudioOnOff
   , frequency :: AudioParameter
   }
+newtype StereoPanner =
+  StereoPanner (Variant (pan :: AudioParameter ))
+type InitializeStereoPanner =
+  { pan :: AudioParameter }
 type MakeStereoPanner =
   { id :: String, parent :: String, pan :: AudioParameter }
+newtype TriangleOsc =
+  TriangleOsc
+    ( Variant
+        ( onOff :: AudioOnOff
+        , frequency :: AudioParameter
+        )
+    )
+type InitializeTriangleOsc =
+  { onOff :: AudioOnOff
+  , frequency :: AudioParameter
+  }
 type MakeTriangleOsc =
   { id :: String
   , parent :: String
   , onOff :: AudioOnOff
   , frequency :: AudioParameter
+  }
+type InitializeWaveshaper =
+  { curve :: BrowserFloatArray
+  , oversample :: Oversample
   }
 type MakeWaveShaper =
   { id :: String
@@ -403,11 +590,20 @@ type MakeWaveShaper =
   , curve :: BrowserFloatArray
   , oversample :: Oversample
   }
+newtype Tumult =
+  Tumuilt (Variant (instructions :: PureEvent Unit -> PureEvent Instruction))
+type InitializeTumult =
+  {  instructions :: PureEvent Unit -> PureEvent Instruction
+  }
 type MakeTumult =
   { id :: String
   , parent :: String
-  , terminus :: String
-  , instructions :: Array (Array Instruction)
+  , instructions :: PureEvent Unit -> PureEvent Instruction
+  }
+type MakeTumultInternal =
+  { id :: String
+  , parent :: String
+  , instructions :: Set Instruction
   }
 type MakeSubgraph
   index
@@ -438,7 +634,7 @@ type SetAudioWorkletParameter =
   { id :: String, paramName :: String, paramValue :: AudioParameter }
 type SetBuffer = { id :: String, buffer :: BrowserAudioBuffer }
 type SetConvolverBuffer = { id :: String, buffer :: BrowserAudioBuffer }
-type SetPeriodicOsc = { id :: String, periodicOsc :: PeriodicOscSpec }
+type SetPeriodicOsc = { id :: String, spec :: PeriodicOscSpec }
 type SetOnOff = { id :: String, onOff :: AudioOnOff }
 type SetBufferOffset = { id :: String, bufferOffset :: Number }
 type SetLoopStart = { id :: String, loopStart :: Number }
@@ -452,7 +648,7 @@ type SetPan = { id :: String, pan :: AudioParameter }
 type SetThreshold = { id :: String, threshold :: AudioParameter }
 type SetRelease = { id :: String, release :: AudioParameter }
 type SetKnee = { id :: String, knee :: AudioParameter }
-type SetDelay = { id :: String, delay :: AudioParameter }
+type SetDelay = { id :: String, delayTime :: AudioParameter }
 type SetPlaybackRate = { id :: String, playbackRate :: AudioParameter }
 type SetFrequency = { id :: String, frequency :: AudioParameter }
 type SetWaveShaperCurve = { id :: String, curve :: BrowserFloatArray }
@@ -460,7 +656,12 @@ type SetInput = { id :: String, source :: String }
 type SetTumult =
   { id :: String
   , terminus :: String
-  , instructions :: Array (Array Instruction)
+  , instructions :: PureEvent Unit -> PureEvent Instruction
+  }
+type SetTumultInternal =
+  { id :: String
+  , terminus :: String
+  , instructions :: Set Instruction
   }
 newtype AudioInterpret event payload = AudioInterpret
   { ids :: ABehavior event String
@@ -499,7 +700,7 @@ newtype AudioInterpret event payload = AudioInterpret
        . MakeSubgraph index env outputChannels produced consumed event payload
       -> payload
   , makeTriangleOsc :: MakeTriangleOsc -> payload
-  , makeTumult :: MakeTumult -> payload
+  , makeTumult :: MakeTumultInternal -> payload
   , makeWaveShaper :: MakeWaveShaper -> payload
   , setAnalyserNodeCb :: SetAnalyserNodeCb -> payload
   , setMediaRecorderCb :: SetMediaRecorderCb -> payload
@@ -533,7 +734,7 @@ newtype AudioInterpret event payload = AudioInterpret
       forall index env
        . InsertOrUpdateSubgraph index env
       -> payload
-  , setTumult :: SetTumult -> payload
+  , setTumult :: SetTumultInternal -> payload
   }
 
 type Instruction' =

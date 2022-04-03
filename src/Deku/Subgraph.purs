@@ -5,7 +5,7 @@ import Prelude
 import Control.Alt ((<|>))
 import Data.Hashable (class Hashable, hash)
 import Data.Tuple.Nested (type (/\), (/\))
-import Deku.Core (DOMInterpret(..), Element(..), Subgraph)
+import Deku.Core (AudioInterpret(..), Node(..), Subgraph)
 import FRP.Behavior (sample_)
 import FRP.Event (class IsEvent, keepLatest)
 
