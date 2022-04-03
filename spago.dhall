@@ -9,6 +9,7 @@
   , "effect"
   , "either"
   , "event"
+  , "everythings-better-with-variants"
   , "exists"
   , "foldable-traversable"
   , "foreign"
