@@ -14,7 +14,7 @@ import Data.Symbol (class IsSymbol, reflectSymbol)
 import Data.Tuple.Nested (type (/\), (/\))
 import Data.Typelevel.Num (class Nat, class Pos, class Pred, D1, D2, pred, toInt)
 import Data.Variant (Unvariant(..), match, unvariant)
-import Deku.Core (AudioParameter, AudioWorkletNodeOptions_(..))
+import Deku.Core (AudioParameter, AudioWorkletNodeOptions_(..), InitialAudioParameter)
 import Deku.Core as C
 import FRP.Behavior (sample_)
 import FRP.Event (class IsEvent, keepLatest)
@@ -110,7 +110,7 @@ allpass i atts elt = C.Node go
 allpass'
   :: forall proxy sym outputChannels produced produced' consumed event payload
    . IsEvent event
-  => Cons sym Unit produced' produced
+  => Cons sym C.Input produced' produced
   => proxy sym
   -> C.InitializeAllpass
   -> event C.Allpass
@@ -176,7 +176,7 @@ audioWorklet
   => Nat numberOfInputs
   => Pos numberOfOutputs
   => ValidateOutputChannelCount numberOfOutputs outputChannelCount
-  => Homogeneous parameterData AudioParameter
+  => Homogeneous parameterData InitialAudioParameter
   => HomogeneousRowLabels parameterData AudioParameter parameterDataRL
   => JSON.WriteForeign { | processorOptions }
   => IsEvent event
@@ -231,7 +231,7 @@ audioWorklet'
   => Nat numberOfInputs
   => Pos numberOfOutputs
   => ValidateOutputChannelCount numberOfOutputs outputChannelCount
-  => Homogeneous parameterData AudioParameter
+  => Homogeneous parameterData InitialAudioParameter
   => HomogeneousRowLabels parameterData AudioParameter parameterDataRL
   => JSON.WriteForeign { | processorOptions }
   => IsEvent event
@@ -280,7 +280,7 @@ bandpass i atts elt = C.Node go
 bandpass'
   :: forall proxy sym outputChannels produced produced' consumed event payload
    . IsEvent event
-  => Cons sym Unit produced' produced
+  => Cons sym C.Input produced' produced
   => proxy sym
   -> C.InitializeBandpass
   -> event C.Bandpass
@@ -323,7 +323,7 @@ constant i atts = C.Node go
 constant'
   :: forall proxy sym outputChannels produced event payload
    . IsEvent event
-  => Cons sym Unit () produced
+  => Cons sym C.Input () produced
   => proxy sym
   -> C.InitializeConstant
   -> event C.Constant
@@ -354,7 +354,7 @@ convolver i = C.Node go
 convolver'
   :: forall proxy sym outputChannels produced event payload
    . IsEvent event
-  => Cons sym Unit () produced
+  => Cons sym C.Input () produced
   => proxy sym
   -> C.InitializeConvolver
   -> C.Node outputChannels produced () event payload
@@ -392,7 +392,7 @@ delay i atts elt = C.Node go
 delay'
   :: forall proxy sym outputChannels produced produced' consumed event payload
    . IsEvent event
-  => Cons sym Unit produced' produced
+  => Cons sym C.Input produced' produced
   => proxy sym
   -> C.InitializeDelay
   -> event C.Delay
@@ -459,7 +459,7 @@ dynamicsCompressor i atts elt = C.Node go
 dynamicsCompressor'
   :: forall proxy sym outputChannels produced produced' consumed event payload
    . IsEvent event
-  => Cons sym Unit produced' produced
+  => Cons sym C.Input produced' produced
   => proxy sym
   -> C.InitializeDynamicsCompressor
   -> event C.DynamicsCompressor
@@ -508,7 +508,7 @@ gain i atts (C.GainInput elts) = C.Node go
 gain'
   :: forall proxy sym outputChannels produced produced' consumed event payload
    . IsEvent event
-  => Cons sym Unit produced' produced
+  => Cons sym C.Input produced' produced
   => proxy sym
   -> C.InitializeGain
   -> event C.Gain
@@ -549,7 +549,7 @@ highpass i atts elt = C.Node go
 highpass'
   :: forall proxy sym outputChannels produced produced' consumed event payload
    . IsEvent event
-  => Cons sym Unit produced' produced
+  => Cons sym C.Input produced' produced
   => proxy sym
   -> C.InitializeHighpass
   -> event C.Highpass
@@ -590,13 +590,27 @@ highshelf i atts elt = C.Node go
 highshelf'
   :: forall proxy sym outputChannels produced produced' consumed event payload
    . IsEvent event
-  => Cons sym Unit produced' produced
+  => Cons sym C.Input produced' produced
   => proxy sym
   -> C.InitializeHighshelf
   -> event C.Highshelf
   -> C.Node outputChannels produced' consumed event payload
   -> C.Node outputChannels produced consumed event payload
 highshelf' _ i atts elts = let C.Node n = highshelf i atts elts in C.Node n
+
+-- input
+
+input
+  :: forall outputChannels produced consumed event payload
+   . IsEvent event
+  => C.Input
+  -> C.Node outputChannels produced consumed event payload
+input (C.Input me) = C.Node go
+  where
+  go parent (C.AudioInterpret { makeInput }) = pure
+    ( makeInput
+        { id: me, parent: parent }
+    )
 
 -- lowpass
 
@@ -631,7 +645,7 @@ lowpass i atts elt = C.Node go
 lowpass'
   :: forall proxy sym outputChannels produced produced' consumed event payload
    . IsEvent event
-  => Cons sym Unit produced' produced
+  => Cons sym C.Input produced' produced
   => proxy sym
   -> C.InitializeLowpass
   -> event C.Lowpass
@@ -672,7 +686,7 @@ lowshelf i atts elt = C.Node go
 lowshelf'
   :: forall proxy sym outputChannels produced produced' consumed event payload
    . IsEvent event
-  => Cons sym Unit produced' produced
+  => Cons sym C.Input produced' produced
   => proxy sym
   -> C.InitializeLowshelf
   -> event C.Lowshelf
@@ -733,7 +747,7 @@ loopBuf i atts = C.Node go
 loopBuf'
   :: forall proxy sym outputChannels produced event payload
    . IsEvent event
-  => Cons sym Unit () produced
+  => Cons sym C.Input () produced
   => proxy sym
   -> C.InitializeLoopBuf
   -> event C.LoopBuf
@@ -764,7 +778,7 @@ mediaElement i = C.Node go
 mediaElement'
   :: forall proxy sym outputChannels produced event payload
    . IsEvent event
-  => Cons sym Unit () produced
+  => Cons sym C.Input () produced
   => proxy sym
   -> C.InitializeMediaElement
   -> C.Node outputChannels produced () event payload
@@ -794,7 +808,7 @@ microphone i = C.Node go
 microphone'
   :: forall proxy sym outputChannels produced event payload
    . IsEvent event
-  => Cons sym Unit () produced
+  => Cons sym C.Input () produced
   => proxy sym
   -> C.InitializeMicrophone
   -> C.Node outputChannels produced () event payload
@@ -833,7 +847,7 @@ notch i atts elt = C.Node go
 notch'
   :: forall proxy sym outputChannels produced produced' consumed event payload
    . IsEvent event
-  => Cons sym Unit produced' produced
+  => Cons sym C.Input produced' produced
   => proxy sym
   -> C.InitializeNotch
   -> event C.Notch
@@ -882,7 +896,7 @@ peaking i atts elt = C.Node go
 peaking'
   :: forall proxy sym outputChannels produced produced' consumed event payload
    . IsEvent event
-  => Cons sym Unit produced' produced
+  => Cons sym C.Input produced' produced
   => proxy sym
   -> C.InitializePeaking
   -> event C.Peaking
@@ -927,7 +941,7 @@ periodicOsc i atts = C.Node go
 periodicOsc'
   :: forall proxy sym outputChannels produced event payload
    . IsEvent event
-  => Cons sym Unit () produced
+  => Cons sym C.Input () produced
   => proxy sym
   -> C.InitializePeriodicOsc
   -> event C.PeriodicOsc
@@ -984,7 +998,7 @@ playBuf i atts = C.Node go
 playBuf'
   :: forall proxy sym outputChannels produced event payload
    . IsEvent event
-  => Cons sym Unit () produced
+  => Cons sym C.Input () produced
   => proxy sym
   -> C.InitializePlayBuf
   -> event C.PlayBuf
@@ -1013,7 +1027,7 @@ ref
   :: forall proxy sym outputChannels consumed event payload
    . IsEvent event
   => IsSymbol sym
-  => Cons sym Unit () consumed
+  => Cons sym C.Input () consumed
   => proxy sym
   -> C.Node outputChannels () consumed event payload
 ref px = C.Node go
@@ -1056,7 +1070,7 @@ sawtoothOsc i atts = C.Node go
 sawtoothOsc'
   :: forall proxy sym outputChannels produced event payload
    . IsEvent event
-  => Cons sym Unit () produced
+  => Cons sym C.Input () produced
   => proxy sym
   -> C.InitializeSawtoothOsc
   -> event C.SawtoothOsc
@@ -1098,7 +1112,7 @@ sinOsc i atts = C.Node go
 sinOsc'
   :: forall proxy sym outputChannels produced event payload
    . IsEvent event
-  => Cons sym Unit () produced
+  => Cons sym C.Input () produced
   => proxy sym
   -> C.InitializeSinOsc
   -> event C.SinOsc
@@ -1140,7 +1154,7 @@ squareOsc i atts = C.Node go
 squareOsc'
   :: forall proxy sym outputChannels produced event payload
    . IsEvent event
-  => Cons sym Unit () produced
+  => Cons sym C.Input () produced
   => proxy sym
   -> C.InitializeSquareOsc
   -> event C.SquareOsc
@@ -1207,7 +1221,7 @@ pan i atts elt = C.Node go
 pan'
   :: forall proxy sym outputChannels produced produced' consumed event payload
    . IsEvent event
-  => Cons sym Unit produced' produced
+  => Cons sym C.Input produced' produced
   => proxy sym
   -> C.InitializeStereoPanner
   -> event C.StereoPanner
@@ -1250,7 +1264,7 @@ triangleOsc i atts = C.Node go
 triangleOsc'
   :: forall proxy sym outputChannels produced event payload
    . IsEvent event
-  => Cons sym Unit () produced
+  => Cons sym C.Input () produced
   => proxy sym
   -> C.InitializeTriangleOsc
   -> event C.TriangleOsc
@@ -1282,7 +1296,7 @@ waveshaper i = C.Node go
 waveshaper'
   :: forall proxy sym outputChannels produced event payload
    . IsEvent event
-  => Cons sym Unit () produced
+  => Cons sym C.Input () produced
   => proxy sym
   -> C.InitializeWaveshaper
   -> C.Node outputChannels produced () event payload

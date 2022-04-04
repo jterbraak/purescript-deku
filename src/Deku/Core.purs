@@ -88,16 +88,21 @@ instance showAudioWorkletNodeOptions_ :: Show AudioWorkletNodeOptions_ where
     <> JSON.writeJSON a.numberOfInputs
     <> " >"
 
+newtype Input = Input String
+
 newtype Node outputChannels produced consumed event payload = Node
   (String -> AudioInterpret event payload -> event payload)
 
 newtype GainInput outputChannels produced consumed event payload = GainInput
   (NonEmptyArray (Node outputChannels produced consumed event payload))
 
-type Subgraph index env outputChannels produced consumed event payload =
-  index
-  -> event env
-  -> Node outputChannels produced consumed event payload
+newtype Subgraph index env outputChannels event payload =
+  Subgraph
+    ( forall produced consumed
+       . index
+      -> event env
+      -> Node outputChannels produced consumed event payload
+    )
 
 newtype Transition = Transition
   (Variant (linear :: Unit, exponential :: Unit, step :: Unit))
@@ -559,7 +564,7 @@ type MakeSquareOsc =
   , frequency :: InitialAudioParameter
   }
 newtype StereoPanner =
-  StereoPanner (Variant (pan :: AudioParameter ))
+  StereoPanner (Variant (pan :: AudioParameter))
 type InitializeStereoPanner =
   { pan :: InitialAudioParameter }
 type MakeStereoPanner =
@@ -594,7 +599,7 @@ type MakeWaveShaper =
 newtype Tumult =
   Tumuilt (Variant (instructions :: forall r. PureEvent r Unit -> PureEvent r Instruction))
 type InitializeTumult =
-  {  instructions :: forall r. PureEvent r Unit -> PureEvent r Instruction
+  { instructions :: forall r. PureEvent r Unit -> PureEvent r Instruction
   }
 type MakeTumult =
   { id :: String
@@ -616,7 +621,7 @@ type MakeSubgraph
   payload =
   { id :: String
   , parent :: String
-  , scenes :: Subgraph index env outputChannels produced consumed event payload
+  , scenes :: Subgraph index env outputChannels event payload
   }
 type InsertOrUpdateSubgraph index env =
   { id :: String
