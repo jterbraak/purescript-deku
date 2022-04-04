@@ -1,6 +1,9 @@
 { name = "purescript-deku"
 , dependencies =
-  [ "arrays"
+  [ "aff"
+  , "aff-promise"
+  , "arraybuffer"
+  , "arrays"
   , "behaviors"
   , "control"
   , "datetime"

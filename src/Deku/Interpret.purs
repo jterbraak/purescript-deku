@@ -2,28 +2,51 @@ module Deku.Interpret where
 
 import Prelude
 
-import Control.Alt ((<|>))
 import Control.Bind (bindFlipped)
-import Control.Promise (Promise)
+import Control.Promise (Promise, toAffE)
 import Data.ArrayBuffer.Types (ArrayBuffer, Float32Array, Uint8Array)
-import Data.Typelevel.Num (class Pos)
+import Data.Maybe (Maybe(..))
+import Data.Symbol (class IsSymbol)
+import Data.Typelevel.Num (class Lt, class Nat, class Pos, D1)
 import Data.Vec (Vec)
 import Data.Vec as V
-import Deku.Core (AudioParameter(..), Node(..), Subgraph(..))
+import Deku.Control (class ValidateOutputChannelCount)
+import Deku.Core (AudioParameter, Node(..), Subgraph(..))
 import Deku.Core as C
-import Deku.WebAPI (AudioContext)
+import Deku.WebAPI (BrowserAudioBuffer)
 import Deku.WebAPI as WebAPI
 import Effect (Effect)
+import Effect.Aff (Aff)
 import Effect.Random as R
 import FRP.Behavior (behavior)
 import FRP.Event (Event, create, makeEvent, subscribe)
-import Foreign.Object (Object)
+import Simple.JSON as JSON
+import Type.Row.Homogeneous (class Homogeneous)
+import Unsafe.Coerce (unsafeCoerce)
 import Web.File.Blob (Blob)
 import Web.File.Url (createObjectURL)
 
 -- foreign non-interpret
+data AudioWorkletNodeRequest
+  (node :: Symbol)
+  (numberOfInputs :: Type)
+  (numberOfOutputs :: Type)
+  (outputChannelCount :: Type)
+  (parameterData :: Row Type)
+  (processorOptions :: Row Type) = AudioWorkletNodeRequest
 
+data AudioWorkletNodeResponse
+  (node :: Symbol)
+  (numberOfInputs :: Type)
+  (numberOfOutputs :: Type)
+  (outputChannelCount :: Type)
+  (parameterData :: Row Type)
+  (processorOptions :: Row Type)
 
+foreign import bufferSampleRate :: BrowserAudioBuffer -> Number
+foreign import bufferLength :: BrowserAudioBuffer -> Int
+foreign import bufferDuration :: BrowserAudioBuffer -> Number
+foreign import bufferNumberOfChannels :: BrowserAudioBuffer -> Int
 foreign import getFFTSize :: WebAPI.AnalyserNode -> Effect Int
 
 foreign import setFFTSize :: WebAPI.AnalyserNode -> Int -> Effect Unit
@@ -179,9 +202,9 @@ getMicrophoneAndCamera audio video =
   ( \i ->
       { microphone:
           if audio then pure $ browserMediaStreamToBrowserMicrophone i
-          else empty
+          else Nothing
       , camera:
-          if video then pure $ browserMediaStreamToBrowserCamera i else empty
+          if video then pure $ browserMediaStreamToBrowserCamera i else Nothing
       }
   )
     <$> toAffE (getBrowserMediaStreamImpl audio video)
@@ -192,12 +215,6 @@ foreign import makeFFIAudioSnapshot
 
 foreign import contextFromSnapshot :: FFIAudioSnapshot -> WebAPI.AudioContext
 foreign import advanceWriteHead :: FFIAudioSnapshot -> Number -> Effect Unit
-
--- | Render audio from an array of audio rendering instructions. This is conceptually the same as
--- | taking `Array Effect Unit -> Effect Unit` and doing `map fold <<< sequence`.
--- | The reason this version is used is because it is ~2x more computationally efficient,
--- | which is important in order to be able to hit audio deadlines.
-foreign import renderAudio :: Array (Effect Unit) -> Effect Unit
 
 -- | Make a browser periodic wave. A PureScript-ified version of the periodic wave constructor
 -- | from the [Web Audio API](https://developer.mozilla.org/en-US/docs/Web/API/PeriodicWave/PeriodicWave).
@@ -230,8 +247,6 @@ audioBuffer
 audioBuffer i v = AudioBuffer i (map V.toArray $ V.toArray v)
 -- foreign
 data FFIAudioSnapshot
-
-foreign import makeFFIAudioSnapshot :: AudioContext -> Effect FFIAudioSnapshot
 
 foreign import destroyUnit_ :: C.DestroyUnit -> FFIAudioSnapshot -> Effect Unit
 foreign import disconnectXFromY_ :: C.DisconnectXFromY -> FFIAudioSnapshot -> Effect Unit
