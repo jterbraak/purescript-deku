@@ -98,7 +98,7 @@ newtype GainInput outputChannels produced consumed event payload = GainInput
 
 newtype Subgraph index env outputChannels event payload =
   Subgraph
-    ( forall produced consumed
+    ( forall (produced :: Row Type) (consumed :: Row Type)
        . index
       -> event env
       -> Node outputChannels produced consumed event payload
@@ -615,8 +615,6 @@ type MakeSubgraph
   index
   env
   (outputChannels :: Type)
-  (produced :: Row Type)
-  (consumed :: Row Type)
   event
   payload =
   { id :: String
@@ -702,8 +700,8 @@ newtype AudioInterpret event payload = AudioInterpret
   , makeSquareOsc :: MakeSquareOsc -> payload
   , makeStereoPanner :: MakeStereoPanner -> payload
   , makeSubgraph ::
-      forall index env outputChannels produced consumed
-       . MakeSubgraph index env outputChannels produced consumed event payload
+      forall index env outputChannels
+       . MakeSubgraph index env outputChannels event payload
       -> payload
   , makeTriangleOsc :: MakeTriangleOsc -> payload
   , makeTumult :: MakeTumultInternal -> payload
@@ -774,8 +772,8 @@ type Instruction' =
   , makeTriangleOsc :: MakeTriangleOsc
   , makeWaveShaper :: MakeWaveShaper
   , makeSubgraph ::
-      forall index env outputChannels produced consumed event payload
-       . MakeSubgraph index env outputChannels produced consumed event payload
+      forall index env outputChannels event payload
+       . MakeSubgraph index env outputChannels event payload
   , makeTumult :: MakeTumult
   , connectXToY :: ConnectXToY
   , destroyUnit :: DestroyUnit

@@ -4,89 +4,77 @@ import Prelude
 
 import Control.Alt ((<|>))
 import Data.Hashable (class Hashable, hash)
+import Data.Symbol (class IsSymbol, reflectSymbol)
 import Data.Tuple.Nested (type (/\), (/\))
-import Deku.Core (AudioInterpret(..), Node(..), Subgraph)
+import Deku.Core (Input(..), Subgraph)
 import Deku.Core as C
 import FRP.Behavior (sample_)
 import FRP.Event (class IsEvent, keepLatest)
+import Prim.Row as Row
+import Prim.RowList (class RowToList)
+import Prim.RowList as RL
+import Record as Record
+import Type.Proxy (Proxy(..))
 
 data SubgraphAction env
   = InsertOrUpdate env
-  | SendToTop
   | Remove
 
+class MakeInputs :: forall k. k -> Row Type -> Constraint
+class MakeInputs producedRL produced | producedRL -> produced where
+  inputs :: forall proxy. proxy producedRL -> { | produced }
 
--- subgraph
---   :: forall index env push event payload
---    . Hashable index
---   => IsEvent event
---   => event (index /\ SubgraphAction env)
---   -> Subgraph index env push event payload
---   -> Element event payload
--- subgraph mods scenes = Element go
---   where
---   go
---     parent
---     ( DOMInterpret
---         { makeSubgraph
---         , insertOrUpdateSubgraph
---         , sendSubgraphToTop
---         , removeSubgraph
---         , ids
---         }
---     ) =
---     keepLatest $ map
---       ( \id -> pure (makeSubgraph { id, parent, scenes: scenes }) <|>
---           map
---             ( \(index /\ instr) -> case instr of
---                 Remove -> removeSubgraph { id, pos: hash index, index }
---                 SendToTop -> sendSubgraphToTop { id, pos: hash index, index }
---                 InsertOrUpdate env -> insertOrUpdateSubgraph
---                   { id, pos: hash index, index, env }
---             )
---             mods
---       )
---       (sample_ ids (pure unit))
+instance inputsNil :: MakeInputs (RL.Nil) () where
+  inputs _ = {}
 
--- delay
+instance inputsCons ::
+  ( IsSymbol key
+  , Row.Cons key Input produced' produced
+  , Row.Lacks key produced'
+  , MakeInputs rest produced'
+  ) =>
+  MakeInputs (RL.Cons key Input rest) produced where
+  inputs _ = let px = (Proxy :: _ key) in Record.insert px (Input (reflectSymbol px)) (inputs (Proxy :: _ rest))
 
 subgraph
-  :: forall outputChannels produced consumed event payload
+  :: forall index env outputChannels produced producedRL consumed event payload
    . IsEvent event
   => Hashable index
+  => RowToList produced producedRL
+  => MakeInputs producedRL produced
   => event (index /\ SubgraphAction env)
-  -> ({|produced} -> Subgraph index env outputChannels event payload)
+  -> ({ | produced } -> Subgraph index env outputChannels event payload)
   -> C.Node outputChannels produced consumed event payload
-subgraph i atts elt = C.Node go
+subgraph mods elt = C.Node go
   where
-  go parent di@(C.AudioInterpret { ids, makeDelay, setDelay }) =
+  subg = elt (inputs (Proxy :: _ producedRL))
+  go parent (C.AudioInterpret { ids, makeSubgraph, insertOrUpdateSubgraph, removeSubgraph }) =
     keepLatest
       ( (sample_ ids (pure unit)) <#> \me ->
           pure
-            ( makeDelay
-                { id: me, parent: parent, delayTime: i.delayTime }
+            ( makeSubgraph
+                { id: me, parent: parent, scenes: subg }
             )
             <|> map
-              ( \(C.Delay e) -> match
-                  { delayTime: \delayTime -> setDelay
-                      { id: me, delayTime }
-                  }
-                  e
+              ( \(index /\ instr) -> case instr of
+                  Remove -> removeSubgraph { id: me, pos: hash index, index }
+                  InsertOrUpdate env -> insertOrUpdateSubgraph
+                    { id: me, pos: hash index, index, env }
               )
-              atts
-            <|> ((\y -> let C.Node x = y in x) elt) me di
+              mods
       )
 
 subgraph'
-  :: forall proxy sym outputChannels produced produced' consumed event payload
+  :: forall proxy sym index env outputChannels produced' produced producedRL consumed event payload
    . IsEvent event
-  => Cons sym C.Input produced' produced
+  => Hashable index
+  => RowToList produced producedRL
+  => MakeInputs producedRL produced
+  => Row.Cons sym C.Input produced' produced
   => proxy sym
-  -> C.InitializeDelay
-  -> event C.Delay
-  -> C.Node outputChannels produced' consumed event payload
+  -> event (index /\ SubgraphAction env)
+  -> ({ | produced } -> Subgraph index env outputChannels event payload)
   -> C.Node outputChannels produced consumed event payload
-subgraph' _ i atts elts = let C.Node n = delay i atts elts in C.Node n
-
+subgraph' _ mods elt = let C.Node n = subgraph mods elt in C.Node n
 
 infixr 6 subgraph as @@
