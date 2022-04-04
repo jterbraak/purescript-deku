@@ -24,7 +24,7 @@ type AudioWorkletNodeOptions_' =
   , numberOfInputs :: Int
   , numberOfOutputs :: Int
   , outputChannelCount :: Array Int
-  , parameterData :: Object AudioParameter
+  , parameterData :: Object InitialAudioParameter
   , processorOptions :: Foreign
   }
 
@@ -33,7 +33,7 @@ type AudioWorkletNodeOptions_S' =
   , numberOfInputs :: Int
   , numberOfOutputs :: Int
   , outputChannelCount :: Array Int
-  , parameterData :: Object AudioParameter
+  , parameterData :: Object InitialAudioParameter
   , processorOptions :: String
   }
 
@@ -60,7 +60,7 @@ newtype AudioWorkletNodeOptions_ = AudioWorkletNodeOptions_
   , numberOfInputs :: Int
   , numberOfOutputs :: Int
   , outputChannelCount :: Array Int
-  , parameterData :: Object AudioParameter
+  , parameterData :: Object InitialAudioParameter
   , processorOptions :: Foreign
   }
 
@@ -121,6 +121,7 @@ type AudioEnvelope = { p :: Array Number, o :: Number, d :: Number }
 type AudioCancel = { o :: Number }
 type AudioSudden = { n :: Number }
 
+type InitialAudioParameter = Number
 newtype AudioParameter = AudioParameter
   ( Variant
       ( numeric :: AudioNumeric
@@ -234,14 +235,14 @@ newtype Allpass = Allpass
       )
   )
 type InitializeAllpass =
-  { frequency :: AudioParameter
-  , q :: AudioParameter
+  { frequency :: InitialAudioParameter
+  , q :: InitialAudioParameter
   }
 type MakeAllpass =
   { id :: String
   , parent :: String
-  , frequency :: AudioParameter
-  , q :: AudioParameter
+  , frequency :: InitialAudioParameter
+  , q :: InitialAudioParameter
   }
 newtype Analyser = Analyser (Variant (cb :: AnalyserNodeCb))
 type InitializeAnalyser = { cb :: AnalyserNodeCb }
@@ -271,30 +272,30 @@ newtype Bandpass = Bandpass
       )
   )
 type InitializeBandpass =
-  { frequency :: AudioParameter
-  , q :: AudioParameter
+  { frequency :: InitialAudioParameter
+  , q :: InitialAudioParameter
   }
 type MakeBandpass =
   { id :: String
   , parent :: String
-  , frequency :: AudioParameter
-  , q :: AudioParameter
+  , frequency :: InitialAudioParameter
+  , q :: InitialAudioParameter
   }
 newtype Constant = Constant
   (Variant (offset :: AudioParameter, onOff :: AudioOnOff))
-type InitializeConstant = { offset :: AudioParameter, onOff :: AudioOnOff }
+type InitializeConstant = { offset :: InitialAudioParameter, onOff :: AudioOnOff }
 type MakeConstant =
   { id :: String
   , parent :: String
-  , offset :: AudioParameter
+  , offset :: InitialAudioParameter
   , onOff :: AudioOnOff
   }
 type InitializeConvolver = { buffer :: BrowserAudioBuffer }
 type MakeConvolver =
   { id :: String, parent :: String, buffer :: BrowserAudioBuffer }
 newtype Delay = Delay (Variant (delayTime :: AudioParameter))
-type InitializeDelay = { delayTime :: AudioParameter }
-type MakeDelay = { id :: String, parent :: String, delayTime :: AudioParameter }
+type InitializeDelay = { delayTime :: InitialAudioParameter }
+type MakeDelay = { id :: String, parent :: String, delayTime :: InitialAudioParameter }
 newtype DynamicsCompressor = DynamicsCompressor
   ( Variant
       ( threshold :: AudioParameter
@@ -305,24 +306,24 @@ newtype DynamicsCompressor = DynamicsCompressor
       )
   )
 type InitializeDynamicsCompressor =
-  { threshold :: AudioParameter
-  , knee :: AudioParameter
-  , ratio :: AudioParameter
-  , attack :: AudioParameter
-  , release :: AudioParameter
+  { threshold :: InitialAudioParameter
+  , knee :: InitialAudioParameter
+  , ratio :: InitialAudioParameter
+  , attack :: InitialAudioParameter
+  , release :: InitialAudioParameter
   }
 type MakeDynamicsCompressor =
   { id :: String
   , parent :: String
-  , threshold :: AudioParameter
-  , knee :: AudioParameter
-  , ratio :: AudioParameter
-  , attack :: AudioParameter
-  , release :: AudioParameter
+  , threshold :: InitialAudioParameter
+  , knee :: InitialAudioParameter
+  , ratio :: InitialAudioParameter
+  , attack :: InitialAudioParameter
+  , release :: InitialAudioParameter
   }
 newtype Gain = Gain (Variant (gain :: AudioParameter))
-type InitializeGain = { gain :: AudioParameter }
-type MakeGain = { id :: String, parent :: String, gain :: AudioParameter }
+type InitializeGain = { gain :: InitialAudioParameter }
+type MakeGain = { id :: String, parent :: String, gain :: InitialAudioParameter }
 newtype Highpass = Highpass
   ( Variant
       ( frequency :: AudioParameter
@@ -330,14 +331,14 @@ newtype Highpass = Highpass
       )
   )
 type InitializeHighpass =
-  { frequency :: AudioParameter
-  , q :: AudioParameter
+  { frequency :: InitialAudioParameter
+  , q :: InitialAudioParameter
   }
 type MakeHighpass =
   { id :: String
   , parent :: String
-  , frequency :: AudioParameter
-  , q :: AudioParameter
+  , frequency :: InitialAudioParameter
+  , q :: InitialAudioParameter
   }
 newtype Highshelf = Highshelf
   ( Variant
@@ -346,16 +347,16 @@ newtype Highshelf = Highshelf
       )
   )
 type InitializeHighshelf =
-  { frequency :: AudioParameter
-  , gain :: AudioParameter
+  { frequency :: InitialAudioParameter
+  , gain :: InitialAudioParameter
   }
 type MakeHighshelf =
   { id :: String
   , parent :: String
-  , frequency :: AudioParameter
-  , gain :: AudioParameter
+  , frequency :: InitialAudioParameter
+  , gain :: InitialAudioParameter
   }
-type MakeInput = { id :: String, parent :: String, input :: String }
+type MakeInput = { id :: String, parent :: String }
 newtype LoopBuf = LoopBuf
   ( Variant
       ( buffer :: BrowserAudioBuffer
@@ -368,7 +369,7 @@ newtype LoopBuf = LoopBuf
 type InitializeLoopBuf =
   { buffer :: BrowserAudioBuffer
   , onOff :: AudioOnOff
-  , playbackRate :: AudioParameter
+  , playbackRate :: InitialAudioParameter
   , loopStart :: Number
   , loopEnd :: Number
   -- duration in initializer but not setter for now
@@ -379,7 +380,7 @@ type MakeLoopBuf =
   , parent :: String
   , buffer :: BrowserAudioBuffer
   , onOff :: AudioOnOff
-  , playbackRate :: AudioParameter
+  , playbackRate :: InitialAudioParameter
   , loopStart :: Number
   , loopEnd :: Number
   , duration :: Maybe Number
@@ -391,14 +392,14 @@ newtype Lowpass = Lowpass
       )
   )
 type InitializeLowpass =
-  { frequency :: AudioParameter
-  , q :: AudioParameter
+  { frequency :: InitialAudioParameter
+  , q :: InitialAudioParameter
   }
 type MakeLowpass =
   { id :: String
   , parent :: String
-  , frequency :: AudioParameter
-  , q :: AudioParameter
+  , frequency :: InitialAudioParameter
+  , q :: InitialAudioParameter
   }
 newtype Lowshelf = Lowshelf
   ( Variant
@@ -407,14 +408,14 @@ newtype Lowshelf = Lowshelf
       )
   )
 type InitializeLowshelf =
-  { frequency :: AudioParameter
-  , gain :: AudioParameter
+  { frequency :: InitialAudioParameter
+  , gain :: InitialAudioParameter
   }
 type MakeLowshelf =
   { id :: String
   , parent :: String
-  , frequency :: AudioParameter
-  , gain :: AudioParameter
+  , frequency :: InitialAudioParameter
+  , gain :: InitialAudioParameter
   }
 type InitializeMediaElement =
   { element :: BrowserMediaElement
@@ -435,14 +436,14 @@ newtype Notch = Notch
       )
   )
 type InitializeNotch =
-  { frequency :: AudioParameter
-  , q :: AudioParameter
+  { frequency :: InitialAudioParameter
+  , q :: InitialAudioParameter
   }
 type MakeNotch =
   { id :: String
   , parent :: String
-  , frequency :: AudioParameter
-  , q :: AudioParameter
+  , frequency :: InitialAudioParameter
+  , q :: InitialAudioParameter
   }
 newtype Peaking = Peaking
   ( Variant
@@ -452,16 +453,16 @@ newtype Peaking = Peaking
       )
   )
 type InitializePeaking =
-  { frequency :: AudioParameter
-  , q :: AudioParameter
-  , gain :: AudioParameter
+  { frequency :: InitialAudioParameter
+  , q :: InitialAudioParameter
+  , gain :: InitialAudioParameter
   }
 type MakePeaking =
   { id :: String
   , parent :: String
-  , frequency :: AudioParameter
-  , q :: AudioParameter
-  , gain :: AudioParameter
+  , frequency :: InitialAudioParameter
+  , q :: InitialAudioParameter
+  , gain :: InitialAudioParameter
   }
 newtype PeriodicOsc =
   PeriodicOsc
@@ -474,14 +475,14 @@ newtype PeriodicOsc =
 type InitializePeriodicOsc =
   { spec :: PeriodicOscSpec
   , onOff :: AudioOnOff
-  , frequency :: AudioParameter
+  , frequency :: InitialAudioParameter
   }
 type MakePeriodicOsc =
   { id :: String
   , parent :: String
   , spec :: PeriodicOscSpec
   , onOff :: AudioOnOff
-  , frequency :: AudioParameter
+  , frequency :: InitialAudioParameter
   }
 newtype PlayBuf =
   PlayBuf
@@ -496,7 +497,7 @@ type InitializePlayBuf =
   { buffer :: BrowserAudioBuffer
   , bufferOffset :: Number
   , onOff :: AudioOnOff
-  , playbackRate :: AudioParameter
+  , playbackRate :: InitialAudioParameter
   , duration :: Maybe Number
   }
 type MakePlayBuf =
@@ -505,7 +506,7 @@ type MakePlayBuf =
   , buffer :: BrowserAudioBuffer
   , bufferOffset :: Number
   , onOff :: AudioOnOff
-  , playbackRate :: AudioParameter
+  , playbackRate :: InitialAudioParameter
   , duration :: Maybe Number
   }
 type InitializeRecorder = { cb :: MediaRecorderCb }
@@ -520,25 +521,25 @@ newtype SawtoothOsc =
     )
 type InitializeSawtoothOsc =
   { onOff :: AudioOnOff
-  , frequency :: AudioParameter
+  , frequency :: InitialAudioParameter
   }
 type MakeSawtoothOsc =
   { id :: String
   , parent :: String
   , onOff :: AudioOnOff
-  , frequency :: AudioParameter
+  , frequency :: InitialAudioParameter
   }
 newtype SinOsc = SinOsc
   (Variant (frequency :: AudioParameter, onOff :: AudioOnOff))
 type InitializeSinOsc =
   { onOff :: AudioOnOff
-  , frequency :: AudioParameter
+  , frequency :: InitialAudioParameter
   }
 type MakeSinOsc =
   { id :: String
   , parent :: String
   , onOff :: AudioOnOff
-  , frequency :: AudioParameter
+  , frequency :: InitialAudioParameter
   }
 newtype SquareOsc =
   SquareOsc
@@ -549,20 +550,20 @@ newtype SquareOsc =
     )
 type InitializeSquareOsc =
   { onOff :: AudioOnOff
-  , frequency :: AudioParameter
+  , frequency :: InitialAudioParameter
   }
 type MakeSquareOsc =
   { id :: String
   , parent :: String
   , onOff :: AudioOnOff
-  , frequency :: AudioParameter
+  , frequency :: InitialAudioParameter
   }
 newtype StereoPanner =
   StereoPanner (Variant (pan :: AudioParameter ))
 type InitializeStereoPanner =
-  { pan :: AudioParameter }
+  { pan :: InitialAudioParameter }
 type MakeStereoPanner =
-  { id :: String, parent :: String, pan :: AudioParameter }
+  { id :: String, parent :: String, pan :: InitialAudioParameter }
 newtype TriangleOsc =
   TriangleOsc
     ( Variant
@@ -572,13 +573,13 @@ newtype TriangleOsc =
     )
 type InitializeTriangleOsc =
   { onOff :: AudioOnOff
-  , frequency :: AudioParameter
+  , frequency :: InitialAudioParameter
   }
 type MakeTriangleOsc =
   { id :: String
   , parent :: String
   , onOff :: AudioOnOff
-  , frequency :: AudioParameter
+  , frequency :: InitialAudioParameter
   }
 type InitializeWaveshaper =
   { curve :: BrowserFloatArray
@@ -591,14 +592,14 @@ type MakeWaveShaper =
   , oversample :: Oversample
   }
 newtype Tumult =
-  Tumuilt (Variant (instructions :: PureEvent Unit -> PureEvent Instruction))
+  Tumuilt (Variant (instructions :: forall r. PureEvent r Unit -> PureEvent r Instruction))
 type InitializeTumult =
-  {  instructions :: PureEvent Unit -> PureEvent Instruction
+  {  instructions :: forall r. PureEvent r Unit -> PureEvent r Instruction
   }
 type MakeTumult =
   { id :: String
   , parent :: String
-  , instructions :: PureEvent Unit -> PureEvent Instruction
+  , instructions :: forall r. PureEvent r Unit -> PureEvent r Instruction
   }
 type MakeTumultInternal =
   { id :: String
@@ -656,7 +657,7 @@ type SetInput = { id :: String, source :: String }
 type SetTumult =
   { id :: String
   , terminus :: String
-  , instructions :: PureEvent Unit -> PureEvent Instruction
+  , instructions :: forall r. PureEvent r Unit -> PureEvent r Instruction
   }
 type SetTumultInternal =
   { id :: String

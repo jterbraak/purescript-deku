@@ -1,4 +1,4 @@
-module FRP.PureEvent.Pure
+module FRP.Event.Pure
   ( PureEvent
   , PureEventIO
   , create
