@@ -1,24 +1,237 @@
-module Deku.Interpret
-  ( FFIAudioSnapshot
-  , effectfulAudioInterpret
-  , makeFFIAudioSnapshot
-  ) where
+module Deku.Interpret where
 
 import Prelude
 
 import Control.Alt ((<|>))
-import Data.Either (Either(..))
+import Control.Bind (bindFlipped)
+import Control.Promise (Promise)
+import Data.ArrayBuffer.Types (ArrayBuffer, Float32Array, Uint8Array)
+import Data.Typelevel.Num (class Pos)
+import Data.Vec (Vec)
+import Data.Vec as V
+import Deku.Core (AudioParameter(..), Node(..), Subgraph(..))
 import Deku.Core as C
+import Deku.WebAPI (AudioContext)
+import Deku.WebAPI as WebAPI
 import Effect (Effect)
 import Effect.Random as R
 import FRP.Behavior (behavior)
 import FRP.Event (Event, create, makeEvent, subscribe)
 import Foreign.Object (Object)
+import Web.File.Blob (Blob)
+import Web.File.Url (createObjectURL)
 
+-- foreign non-interpret
+
+
+foreign import getFFTSize :: WebAPI.AnalyserNode -> Effect Int
+
+foreign import setFFTSize :: WebAPI.AnalyserNode -> Int -> Effect Unit
+
+foreign import getFrequencyBinCount :: WebAPI.AnalyserNode -> Effect Int
+
+foreign import getSmoothingTimeConstant :: WebAPI.AnalyserNode -> Effect Number
+
+foreign import setSmoothingTimeConstant
+  :: WebAPI.AnalyserNode -> Number -> Effect Unit
+
+foreign import getMinDecibels :: WebAPI.AnalyserNode -> Effect Number
+
+foreign import setMinDecibels :: WebAPI.AnalyserNode -> Number -> Effect Unit
+
+foreign import getMaxDecibels :: WebAPI.AnalyserNode -> Effect Number
+
+foreign import setMaxDecibels :: WebAPI.AnalyserNode -> Number -> Effect Unit
+
+foreign import getFloatTimeDomainData
+  :: WebAPI.AnalyserNode -> Effect Float32Array
+
+foreign import getFloatFrequencyData
+  :: WebAPI.AnalyserNode -> Effect Float32Array
+
+foreign import getByteTimeDomainData :: WebAPI.AnalyserNode -> Effect Uint8Array
+
+foreign import getByteFrequencyData :: WebAPI.AnalyserNode -> Effect Uint8Array
+
+-- | For a given audio context, add the audio worklet module at a given URI.
+foreign import audioWorkletAddModule_
+  :: WebAPI.AudioContext -> String -> Effect (Promise Unit)
+
+-- | Gets the audio clock time from an audio context.
+foreign import getAudioClockTime :: WebAPI.AudioContext -> Effect Number
+
+-- | Stops a media recorder
+foreign import stopMediaRecorder :: WebAPI.MediaRecorder -> Effect Unit
+
+-- | For a given MIME type, pass the URL-ified content of a media recorder as a string to a handler.
+-- |
+-- | ```purescript
+-- | mediaRecorderToUrl "audio/ogg" setAudioTagUrlToThisContent recorder
+-- | ```
+foreign import mediaRecorderToBlob
+  :: String -> (Blob -> Effect Unit) -> WebAPI.MediaRecorder -> Effect Unit
+
+mediaRecorderToUrl
+  :: String -> (String -> Effect Unit) -> WebAPI.MediaRecorder -> Effect Unit
+mediaRecorderToUrl s cb mr = flip (mediaRecorderToBlob s) mr
+  (bindFlipped cb <<< createObjectURL)
+
+-- | Is this MIME type supported by this browser.
+foreign import isTypeSupported :: String -> Effect Boolean
+
+-- | Given an audio context and a URI, decode the content of the URI to an audio buffer.
+decodeAudioDataFromUri
+  :: WebAPI.AudioContext -> String -> Aff WebAPI.BrowserAudioBuffer
+decodeAudioDataFromUri ctx s =
+  toAffE (fetchArrayBuffer s) >>=
+    (toAffE <<< decodeAudioDataFromArrayBuffer ctx)
+
+foreign import fetchArrayBuffer :: String -> Effect (Promise ArrayBuffer)
+
+foreign import decodeAudioDataFromArrayBuffer
+  :: WebAPI.AudioContext
+  -> ArrayBuffer
+  -> Effect (Promise WebAPI.BrowserAudioBuffer)
+
+-- | Given an audio context and a base-64-encoded audio file, decode the content of the string to an audio buffer.
+foreign import decodeAudioDataFromBase64EncodedString
+  :: WebAPI.AudioContext -> String -> Effect (Promise WebAPI.BrowserAudioBuffer)
+
+foreign import makePeriodicWaveImpl
+  :: WebAPI.AudioContext
+  -> Array Number
+  -> Array Number
+  -> Effect WebAPI.BrowserPeriodicWave
+
+-- | For a given audio context, use an audio buffer to create a browser audio buffer. This is useful when doing DSP in the browser.  Note that `AudioBuffer` is a purescript type whereas `WebAPI.BrowserAudioBuffer` is an optimized browser-based type. That means that, once you write to `WebAPI.BrowserAudioBuffer`, it is effectively a blob and its contents cannot be retrieved using the WAGS API.
+foreign import makeAudioBuffer
+  :: WebAPI.AudioContext -> AudioBuffer -> Effect WebAPI.BrowserAudioBuffer
+
+-- | Make a float 32 array. Useful when creating a waveshaper node.
+foreign import makeFloatArray :: Array Number -> Effect WebAPI.BrowserFloatArray
+
+-- | Make a new audio context.
+foreign import context :: Effect WebAPI.AudioContext
+
+-- | Send 0s from a context immediately. This is useful on iOS so that the context doesn't switch to a suspended state.
+foreign import constant0Hack :: WebAPI.AudioContext -> Effect (Effect Unit)
+
+-- | Get the state of the context
+foreign import contextState :: WebAPI.AudioContext -> Effect String
+
+-- | Get the state of the context
+foreign import contextResume :: WebAPI.AudioContext -> Effect (Promise Unit)
+
+-- | Close an audio context.
+foreign import close :: WebAPI.AudioContext -> Effect Unit
+
+foreign import data BrowserMediaStream :: Type
+
+foreign import getBrowserMediaStreamImpl
+  :: Boolean -> Boolean -> Effect (Promise BrowserMediaStream)
+
+data Audio
+
+audioWorkletAddModule
+  :: forall node numberOfInputs numberOfOutputs outputChannelCount parameterData
+       processorOptions
+   . IsSymbol node
+  => Nat numberOfInputs
+  => Pos numberOfOutputs
+  => ValidateOutputChannelCount numberOfOutputs outputChannelCount
+  => Homogeneous parameterData AudioParameter
+  => JSON.WriteForeign { | processorOptions }
+  => WebAPI.AudioContext
+  -> String
+  -> ( AudioWorkletNodeRequest node numberOfInputs
+         numberOfOutputs
+         outputChannelCount
+         parameterData
+         processorOptions
+
+     )
+  -> Aff
+       ( AudioWorkletNodeResponse node numberOfInputs
+           numberOfOutputs
+           outputChannelCount
+           parameterData
+           processorOptions
+
+       )
+audioWorkletAddModule c px _ = toAffE (audioWorkletAddModule_ c px) $>
+  unsafeCoerce unit
+
+browserMediaStreamToBrowserMicrophone
+  :: BrowserMediaStream -> WebAPI.BrowserMicrophone
+browserMediaStreamToBrowserMicrophone = unsafeCoerce
+
+browserMediaStreamToBrowserCamera :: BrowserMediaStream -> WebAPI.BrowserCamera
+browserMediaStreamToBrowserCamera = unsafeCoerce
+
+getMicrophoneAndCamera
+  :: Boolean
+  -> Boolean
+  -> Aff
+       { microphone :: Maybe WebAPI.BrowserMicrophone
+       , camera :: Maybe WebAPI.BrowserCamera
+       }
+getMicrophoneAndCamera audio video =
+  ( \i ->
+      { microphone:
+          if audio then pure $ browserMediaStreamToBrowserMicrophone i
+          else empty
+      , camera:
+          if video then pure $ browserMediaStreamToBrowserCamera i else empty
+      }
+  )
+    <$> toAffE (getBrowserMediaStreamImpl audio video)
+
+-- | Create a unit cache. This returns a fresh empty object `{}` that is used to cache audio units.
+foreign import makeFFIAudioSnapshot
+  :: WebAPI.AudioContext -> Effect FFIAudioSnapshot
+
+foreign import contextFromSnapshot :: FFIAudioSnapshot -> WebAPI.AudioContext
+foreign import advanceWriteHead :: FFIAudioSnapshot -> Number -> Effect Unit
+
+-- | Render audio from an array of audio rendering instructions. This is conceptually the same as
+-- | taking `Array Effect Unit -> Effect Unit` and doing `map fold <<< sequence`.
+-- | The reason this version is used is because it is ~2x more computationally efficient,
+-- | which is important in order to be able to hit audio deadlines.
+foreign import renderAudio :: Array (Effect Unit) -> Effect Unit
+
+-- | Make a browser periodic wave. A PureScript-ified version of the periodic wave constructor
+-- | from the [Web Audio API](https://developer.mozilla.org/en-US/docs/Web/API/PeriodicWave/PeriodicWave).
+-- | Given an audio context, a vector of real parts of complex numbers, and a vector of imaginary parts of complex numbers, build a periodic wave interpretable by the Web Audio API.
+makePeriodicWave
+  :: forall len
+   . Lt D1 len
+  => WebAPI.AudioContext
+  -> Vec len Number
+  -> Vec len Number
+  -> Effect WebAPI.BrowserPeriodicWave
+makePeriodicWave ctx a b = makePeriodicWaveImpl ctx (V.toArray a) (V.toArray b)
+
+-- | A multi-channel audio buffer.
+data AudioBuffer = AudioBuffer Int (Array (Array Number))
+
+instance showAudioBuffer :: Show AudioBuffer where
+  show (AudioBuffer i a) = "AudioBuffer <" <> show i <> " : " <> show a <> ">"
+
+derive instance eqAudioBuffer :: Eq AudioBuffer
+
+-- | Make a multi-channel audio buffer. Each vector into the multi-channel buffer must be the same length.
+audioBuffer
+  :: forall bch blen
+   . Pos bch
+  => Pos blen
+  => Int
+  -> Vec bch (Vec blen Number)
+  -> AudioBuffer
+audioBuffer i v = AudioBuffer i (map V.toArray $ V.toArray v)
 -- foreign
 data FFIAudioSnapshot
 
-foreign import makeFFIAudioSnapshot :: Effect FFIAudioSnapshot
+foreign import makeFFIAudioSnapshot :: AudioContext -> Effect FFIAudioSnapshot
 
 foreign import destroyUnit_ :: C.DestroyUnit -> FFIAudioSnapshot -> Effect Unit
 foreign import disconnectXFromY_ :: C.DisconnectXFromY -> FFIAudioSnapshot -> Effect Unit
@@ -50,10 +263,49 @@ foreign import makeSinOsc_ :: C.MakeSinOsc -> FFIAudioSnapshot -> Effect Unit
 foreign import makeSpeaker_ :: C.MakeSpeaker -> FFIAudioSnapshot -> Effect Unit
 foreign import makeSquareOsc_ :: C.MakeSquareOsc -> FFIAudioSnapshot -> Effect Unit
 foreign import makeStereoPanner_ :: C.MakeStereoPanner -> FFIAudioSnapshot -> Effect Unit
-
+foreign import makeSubgraph_
+  :: forall index env
+   . String
+  -> String
+  -> ( index
+       -> Effect
+            { actualized ::
+                Event (FFIAudioSnapshot -> Effect Unit)
+            , pusher :: env -> Effect Unit
+            }
+     )
+  -> FFIAudioSnapshot
+  -> Effect Unit
+foreign import makeTriangleOsc_ :: C.MakeTriangleOsc -> FFIAudioSnapshot -> Effect Unit
+foreign import makeWaveShaper_ :: C.MakeWaveShaper -> FFIAudioSnapshot -> Effect Unit
+foreign import setAnalyserNodeCb_ :: C.SetAnalyserNodeCb -> FFIAudioSnapshot -> Effect Unit
+foreign import setMediaRecorderCb_ :: C.SetMediaRecorderCb -> FFIAudioSnapshot -> Effect Unit
+foreign import setWaveShaperCurve_ :: C.SetWaveShaperCurve -> FFIAudioSnapshot -> Effect Unit
+foreign import setAudioWorkletParameter_ :: C.SetAudioWorkletParameter -> FFIAudioSnapshot -> Effect Unit
+foreign import setBuffer_ :: C.SetBuffer -> FFIAudioSnapshot -> Effect Unit
+foreign import setConvolverBuffer_ :: C.SetConvolverBuffer -> FFIAudioSnapshot -> Effect Unit
+foreign import setPeriodicOsc_ :: C.SetPeriodicOsc -> FFIAudioSnapshot -> Effect Unit
+foreign import setOnOff_ :: C.SetOnOff -> FFIAudioSnapshot -> Effect Unit
+foreign import setBufferOffset_ :: C.SetBufferOffset -> FFIAudioSnapshot -> Effect Unit
+foreign import setLoopStart_ :: C.SetLoopStart -> FFIAudioSnapshot -> Effect Unit
+foreign import setLoopEnd_ :: C.SetLoopEnd -> FFIAudioSnapshot -> Effect Unit
+foreign import setRatio_ :: C.SetRatio -> FFIAudioSnapshot -> Effect Unit
+foreign import setOffset_ :: C.SetOffset -> FFIAudioSnapshot -> Effect Unit
+foreign import setGain_ :: C.SetGain -> FFIAudioSnapshot -> Effect Unit
+foreign import setQ_ :: C.SetQ -> FFIAudioSnapshot -> Effect Unit
+foreign import setFrequency_ :: C.SetFrequency -> FFIAudioSnapshot -> Effect Unit
+foreign import setKnee_ :: C.SetKnee -> FFIAudioSnapshot -> Effect Unit
+foreign import setAttack_ :: C.SetAttack -> FFIAudioSnapshot -> Effect Unit
+foreign import setRelease_ :: C.SetRelease -> FFIAudioSnapshot -> Effect Unit
+foreign import setPan_ :: C.SetPan -> FFIAudioSnapshot -> Effect Unit
+foreign import setThreshold_ :: C.SetThreshold -> FFIAudioSnapshot -> Effect Unit
+foreign import setDelay_ :: C.SetDelay -> FFIAudioSnapshot -> Effect Unit
+foreign import setPlaybackRate_ :: C.SetPlaybackRate -> FFIAudioSnapshot -> Effect Unit
+foreign import removeSubgraph_ :: forall index. C.RemoveSubgraph index -> FFIAudioSnapshot -> Effect Unit
+foreign import insertOrUpdateSubgraph_ :: forall index env. C.InsertOrUpdateSubgraph index env -> FFIAudioSnapshot -> Effect Unit
 effectfulAudioInterpret
   :: C.AudioInterpret Event (FFIAudioSnapshot -> Effect Unit)
-effectfulAudioInterpret =
+effectfulAudioInterpret = C.AudioInterpret
   { ids: map show $ behavior \f -> makeEvent \k -> do
       r <- R.random
       subscribe f \x -> k (x r)
@@ -87,9 +339,20 @@ effectfulAudioInterpret =
   , makeSpeaker: makeSpeaker_
   , makeSquareOsc: makeSquareOsc_
   , makeStereoPanner: makeStereoPanner_
-  , makeSubgraph: makeSubgraph_
+  , makeSubgraph: \{ id, parent, scenes } dom ->
+      flip (makeSubgraph_ id parent) dom \index ->
+        do
+          evt <- create
+          let event = evt.event
+          let
+            actualized =
+              let
+                Node elt = (let Subgraph sg = scenes in sg) index event
+              in
+                elt parent effectfulAudioInterpret
+          pure { actualized, pusher: evt.push }
   , makeTriangleOsc: makeTriangleOsc_
-  , makeTumult: makeTumult_
+  , makeTumult: \_ _ -> pure unit -- todo: makeTumult_
   , makeWaveShaper: makeWaveShaper_
   , setAnalyserNodeCb: setAnalyserNodeCb_
   , setMediaRecorderCb: setMediaRecorderCb_
@@ -114,8 +377,7 @@ effectfulAudioInterpret =
   , setDelay: setDelay_
   , setPlaybackRate: setPlaybackRate_
   , setFrequency: setFrequency_
-  , setInput: setInput_
   , removeSubgraph: removeSubgraph_
   , insertOrUpdateSubgraph: insertOrUpdateSubgraph_
-  , setTumult: setTumult_
+  , setTumult: \_ _ -> pure unit -- todo: setTumult_
   }

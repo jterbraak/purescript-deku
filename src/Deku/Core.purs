@@ -656,7 +656,6 @@ type SetDelay = { id :: String, delayTime :: AudioParameter }
 type SetPlaybackRate = { id :: String, playbackRate :: AudioParameter }
 type SetFrequency = { id :: String, frequency :: AudioParameter }
 type SetWaveShaperCurve = { id :: String, curve :: BrowserFloatArray }
-type SetInput = { id :: String, source :: String }
 type SetTumult =
   { id :: String
   , terminus :: String
@@ -729,7 +728,6 @@ newtype AudioInterpret event payload = AudioInterpret
   , setDelay :: SetDelay -> payload
   , setPlaybackRate :: SetPlaybackRate -> payload
   , setFrequency :: SetFrequency -> payload
-  , setInput :: SetInput -> payload
   , removeSubgraph ::
       forall index
        . RemoveSubgraph index
@@ -801,7 +799,6 @@ type Instruction' =
   , setPlaybackRate :: SetPlaybackRate
   , setFrequency :: SetFrequency
   , setWaveShaperCurve :: SetWaveShaperCurve
-  , setInput :: SetInput
   , removeSubgraph :: forall index. RemoveSubgraph index
   , insertOrUpdateSubgraph :: forall index env. InsertOrUpdateSubgraph index env
   , setTumult :: SetTumult
@@ -868,7 +865,6 @@ instructionWeight (Instruction v) = v # match
   , setPlaybackRate: const 6
   , setFrequency: const 6
   , setWaveShaperCurve: const 6
-  , setInput: const 6
   , removeSubgraph: const 7
   , insertOrUpdateSubgraph: const 8
   , setTumult: const 9
@@ -933,7 +929,6 @@ instructionId (Instruction v) = v # match
   , setPlaybackRate: _.id
   , setFrequency: _.id
   , setWaveShaperCurve: _.id
-  , setInput: _.id
   , removeSubgraph: _.id
   , insertOrUpdateSubgraph: _.id
   , setTumult: _.id
