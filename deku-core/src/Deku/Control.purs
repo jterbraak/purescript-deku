@@ -28,7 +28,7 @@ import Data.Maybe (Maybe(..))
 import Data.Newtype (unwrap, wrap)
 import Data.Profunctor (dimap, lcmap)
 import Data.Tuple (Tuple(..))
-import Deku.Attribute (Attribute, Attribute', AttributeValue(..), unsafeUnAttribute)
+import Deku.Attribute (AnAttribute, AnAttribute', AttributeValue(..), unsafeUnAttribute)
 import Deku.Core (DOMInterpret(..), HeadNode', Node(..), Node', Nut(..), NutF(..), dyn, flattenArgs, unsafeSetPos)
 import FRP.Poll (Poll, sample, sampleBy)
 import Prim.Int (class Compare)
@@ -57,7 +57,7 @@ unsafeSetAttribute
   :: forall payload
    . DOMInterpret payload
   -> String
-  -> Attribute'
+  -> AnAttribute'
   -> payload
 unsafeSetAttribute
   (DOMInterpret { setProp, setCb, unsetAttribute })
@@ -74,7 +74,7 @@ elementify2
   :: forall element
    . Maybe String
   -> String
-  -> Array (Poll (Attribute element))
+  -> Array (Poll (AnAttribute element))
   -> Array Nut
   -> Nut
 elementify2 ns en attributes kids = Nut
@@ -96,7 +96,7 @@ elementify
   :: forall payload element
    . Maybe String
   -> String
-  -> Poll (Attribute element)
+  -> Poll (AnAttribute element)
   -> NutF payload
   -> Node payload
 elementify ns tag atts children = Node $ Element go

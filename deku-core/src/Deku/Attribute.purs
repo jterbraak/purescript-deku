@@ -4,8 +4,9 @@
 -- | There's also the `xdata` function that allows you to construct an aribitrary data attribute.
 module Deku.Attribute
   ( AttributeValue(..)
-  , Attribute
-  , Attribute'
+  , AnAttribute
+  , AnAttribute'
+  , Attribute(..)
   , unsafeUnAttribute
   , unsafeAttribute
   , prop'
@@ -18,6 +19,7 @@ module Deku.Attribute
 
 import Prelude
 
+import Data.Functor.Contravariant (class Contravariant)
 import Data.Newtype (class Newtype)
 import Effect (Effect)
 import Safe.Coerce (coerce)
@@ -70,26 +72,33 @@ unset' = Unset'
 -- | the `:=` family of operators and helpers like `style` and `klass` instead.
 data AttributeValue = Prop' String | Cb' Cb | Unset'
 
-type Attribute' = { key :: String
+type AnAttribute' =
+  { key :: String
   , value :: AttributeValue
   }
 
 -- | Low level representation of key-value pairs for attributes and listeners.
 -- | In general, this type is for internal use only. In practice, you'll use
 -- | the `:=` family of operators and helpers like `style` and `klass` instead.
-newtype Attribute :: forall k . k -> Type
-newtype Attribute i = Attribute Attribute'
+newtype AnAttribute :: forall k . k -> Type
+newtype AnAttribute i = AnAttribute AnAttribute'
 
 -- | For internal use only, exported to be used by other modules. Ignore this.
 unsafeUnAttribute
-  :: forall e. Attribute e -> { key :: String, value :: AttributeValue }
+  :: forall e. AnAttribute e -> AnAttribute'
 unsafeUnAttribute = coerce
 
 -- | For internal use only, exported to be used by other modules. Ignore this.
 unsafeAttribute
-  :: forall e. { key :: String, value :: AttributeValue } -> Attribute e
-unsafeAttribute = Attribute
+  :: forall e. AnAttribute' -> AnAttribute e
+unsafeAttribute = AnAttribute
+
+newtype Attribute :: forall k . k -> Type -> Type
+newtype Attribute e env = Attribute ( env -> AnAttribute e )
+derive instance Newtype ( Attribute e env ) _
+instance Contravariant ( Attribute e ) where
+  cmap f ( Attribute af ) = Attribute ( f >>> af )
 
 -- | Construct a [data attribute](https://developer.mozilla.org/en-US/docs/Learn/HTML/Howto/Use_data_attributes).
-xdata :: forall e. String -> String -> Attribute e
-xdata k v = unsafeAttribute { key: "data-" <> k, value: Prop' v }
+xdata :: forall e env . String -> String -> Attribute e env
+xdata k v = Attribute \_ -> unsafeAttribute { key: "data-" <> k, value: Prop' v }

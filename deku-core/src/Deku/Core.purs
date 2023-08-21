@@ -5,6 +5,7 @@
 -- | type signature (for which `Nut` is an alias).
 module Deku.Core
   ( ANut(..)
+  , Nut(..)
   , AttributeParent
   , AssociateWithUnsubscribe
   , DOMInterpret(..)
@@ -19,9 +20,7 @@ module Deku.Core
   , MakeText
   , RemoveDynBeacon
   , Node(..)
-  , Nut(..)
   , Hook
-  , NutWith
   , SendToPos
   , SetCb
   , SetProp
@@ -53,6 +52,7 @@ import Control.Monad.ST.Global (Global)
 import Control.Monad.ST.Global as Region
 import Control.Plus (empty)
 import Data.Foldable (for_)
+import Data.Functor.Contravariant (class Contravariant)
 import Data.List (List)
 import Data.Maybe (Maybe(..))
 import Data.Newtype (class Newtype, unwrap)
@@ -68,15 +68,7 @@ import Web.DOM as Web.DOM
 -- | The signature of a custom Deku hook. This works when `payload` variables
 -- | don't need to be used explicitly. When using these variables explicitly, opt for using
 -- | `Nut` directly (meaning write out the definition by hand).
-type Hook a = (a -> Nut) -> Nut
-
--- | A helper for using `Nut` with an environment.
-type NutWith env = env -> Nut
-
--- | A helper for when you need to use `Nut` as a fully saturated type.
--- | This is the same as using [`Exists`](https://github.com/purescript/purescript-exists)
--- | twice on `Nut`.
-newtype ANut = ANut Nut
+type Hook env a = (a -> Nut env ) -> Nut env
 
 type DekuExtra = (pos :: Maybe Int, ez :: Boolean, dynFamily :: Maybe String)
 
@@ -103,29 +95,35 @@ type Nut' payload = Bolson.Entity Int (Node payload)
 newtype NutF payload = NutF (Nut' payload)
 
 derive instance Newtype (NutF payload) _
-newtype Nut = Nut (forall payload. NutF payload)
+newtype ANut = ANut (forall payload. NutF payload)
 
-instance Semigroup Nut where
+instance Semigroup ANut where
   append a b = fixed [ a, b ]
 
-instance Monoid Nut where
-  mempty = Nut
+instance Monoid ANut where
+  mempty = ANut
     ( NutF
         ( Bolson.Element'
             (Node (Bolson.Element \_ _ -> poll \_ -> empty))
         )
     )
 
+newtype Nut env = Nut ( env -> ANut )
+derive newtype instance Semigroup ( Nut env )
+derive newtype instance Monoid ( Nut env )
+instance Contravariant Nut where
+  cmap f ( Nut df ) = Nut ( f >>> df )
+
 -- | For internal use only in deku's hooks. See `useDyn` in `Deku.Hooks` for more information.
 unsafeSetPos
-  :: Int -> Nut -> Nut
+  :: Int -> ANut -> ANut
 unsafeSetPos = Just >>> unsafeSetPos'
 
 unsafeSetPos'
   :: Maybe Int
-  -> Nut
-  -> Nut
-unsafeSetPos' i (Nut df) = Nut (g df)
+  -> ANut
+  -> ANut
+unsafeSetPos' i (ANut df) = ANut (g df)
   where
   g :: forall payload. NutF payload -> NutF payload
   g (NutF e) = (NutF (f e))
@@ -321,10 +319,10 @@ __internalDekuFlatten a b c = BControl.flatten flattenArgs ((\(NutF x) -> x) a)
 
 dynify
   :: forall i
-   . (i -> Nut)
+   . (i -> ANut)
   -> i
-  -> Nut
-dynify dfun es = Nut (go' ((\(Nut df) -> df) (dfun es)))
+  -> ANut
+dynify dfun es = ANut (go' ((\(ANut df) -> df) (dfun es)))
   where
   go' :: forall payload. NutF payload -> NutF payload
   go' x = NutF (Bolson.Element' (Node (Bolson.Element (go x))))
@@ -411,21 +409,21 @@ dynify dfun es = Nut (go' ((\(Nut df) -> df) (dfun es)))
 -- | This function is used along with `useDyn` to create dynamic collections of elements, like todo items in a todo mvc app.
 -- | See [**Dynamic components**](https://purescript-deku.netlify.app/core-concepts/collections#dynamic-components) in the Deku guide for more information.
 dyn
-  :: Poll (Tuple (Poll Child) Nut)
-  -> Nut
+  :: Poll (Tuple (Poll Child) ANut)
+  -> ANut
 dyn = dynify myDyn
   where
   bolsonify
     :: forall payload
-     . Tuple (Poll Child) Nut
+     . Tuple (Poll Child) ANut
     -> Tuple (Poll (Bolson.Child Int)) (Bolson.Entity Int (Node payload))
-  bolsonify (Tuple child (Nut nut)) = Tuple (map (\(Child x) -> x) child)
+  bolsonify (Tuple child (ANut nut)) = Tuple (map (\(Child x) -> x) child)
     ((\(NutF n) -> n) nut)
 
   myDyn
-    :: (Poll (Tuple (Poll Child) Nut))
-    -> Nut
-  myDyn e = Nut
+    :: (Poll (Tuple (Poll Child) ANut))
+    -> ANut
+  myDyn e = ANut
     (myDyn' (map bolsonify e))
 
   myDyn'
@@ -440,12 +438,12 @@ dyn = dynify myDyn
 -- | Once upon a time, this function was used to create a list of `Nut`-s that are merged
 -- | together. Now, as `Nut` is a `Monoid`, you can use `fold` instead.
 fixed
-  :: Array Nut
-  -> Nut
+  :: Array ANut
+  -> ANut
 fixed = dynify myFixed
   where
-  myFixed :: Array Nut -> Nut
-  myFixed e = Nut (myFixed' (map (\(Nut c) -> c) e))
+  myFixed :: Array ANut -> ANut
+  myFixed e = ANut (myFixed' (map (\(ANut c) -> c) e))
 
   myFixed'
     :: forall payload
