@@ -3,45 +3,44 @@ module Test.Main where
 import Prelude
 
 import Control.Alt ((<|>))
-import Control.Monad.Rec.Class (Step(..), tailRecM)
-import Control.Monad.ST.Class (liftST)
 import Control.Plus (empty)
-import Data.Array ((!!), (..))
+import Data.Array ((..))
 import Data.Array as Array
-import Data.Array.ST as STArray
 import Data.Filterable (compact, filter)
-import Data.Foldable (intercalate, for_, traverse_)
+import Data.Foldable (intercalate, sequence_, traverse_)
 import Data.FunctorWithIndex (mapWithIndex)
-import Data.Maybe (Maybe(..), fromMaybe)
-import Data.Tuple (Tuple(..), fst)
+import Data.Maybe (Maybe(..))
+import Data.Tuple (Tuple(..))
 import Data.Tuple.Nested ((/\))
 import Deku.Control (text, text_)
-import Deku.Core (Hook, Nut, fixed, portal, useMailboxedS, useRefST)
-import Deku.DOM (Attribute)
+import Deku.Core (Hook, Nut(..), deferO, fixed, portal, useRefST)
 import Deku.DOM as D
-import Deku.DOM as DOM
 import Deku.DOM.Attributes as DA
-import Deku.DOM.Combinators (injectElementT, templatedMap_)
+import Deku.DOM.Combinators (injectElementT)
 import Deku.DOM.Listeners as DL
 import Deku.Do as Deku
-import Deku.Hooks (dynOptions, guard, guardWith, useDyn, useDynAtBeginning, useDynAtEnd, useDynAtEndWith, useHot, useHotRant, useRant, useRef, useState, useState', (<#~>))
-import Deku.Hooks as DH
-import Deku.Pursx (template, pursx)
-import Deku.Some as Some
-import Deku.Toplevel (runInBody)
-import Effect (Effect, foreachE)
-import Effect.Random (random, randomInt)
-import FRP.Event (fold)
+import Deku.Hooks (cycle, dynOptions, guard, guardWith, useDyn, useDynAtBeginning, useDynAtEnd, useDynAtEndWith, useHot, useHotRant, useRant, useRef, useState, useState', (<#~>))
+import Deku.Pursx (lenientPursx, pursx)
+import Deku.Toplevel (SSROutput, hydrateInBody, runInBody, ssrInBody)
+import Effect (Effect)
+import Effect.Random (random)
+import Effect.Uncurried (mkEffectFn2, runEffectFn2)
+import FRP.Event (count, fold)
 import FRP.Poll (Poll, merge, mergeMap, mergeMapPure, stToPoll)
-import Record (union)
 import Web.HTML (window)
 import Web.HTML.HTMLInputElement as InputElement
 import Web.HTML.Window (alert)
 
 foreign import hackyInnerHTML :: String -> String -> Effect Unit
 
-runTest :: Nut -> Effect Unit
+runTest :: Nut -> Effect (Effect Unit)
 runTest = runInBody
+
+runSSR :: Nut -> Effect SSROutput
+runSSR = ssrInBody
+
+runHydration :: SSROutput -> Nut -> Effect Unit
+runHydration cache nut = void $ hydrateInBody cache nut
 
 sanityCheck :: Nut
 sanityCheck = D.span [ DA.id_ "hello" ] [ text_ "Hello" ]
@@ -158,7 +157,7 @@ sendsToPositionFixed = Deku.do
         fixed
           [ D.span [ DA.id_ ("dyn" <> show i <> "a") ]
               [ text_ (show i <> "a") ]
-          , D.span [ DA.id_ ("dyn" <> show i <> "a") ]
+          , D.span [ DA.id_ ("dyn" <> show i <> "b") ]
               [ text_ (show i <> "b") ]
           ]
     , D.button [ DA.id_ "pos", DL.click_ \_ -> setPosIdx 1 ]
@@ -187,6 +186,20 @@ insertsAtCorrectPositions = D.div [ DA.id_ "div0" ]
       D.span [ DA.id_ ("dyn" <> show i) ] [ text_ (show i) ]
   ]
 
+nestedInPureDyn :: Nut
+nestedInPureDyn = Deku.do
+  pushClick /\ click <- useState'
+  
+  D.div [ DA.id_ "div0" ] 
+    [ text_ "start"
+    , Deku.do
+      { value } <- useDynAtEnd ( mergeMap pure [ 0, 1, 2, 3 ] )
+      _ <- useDynAtEnd click
+      D.span [ DA.id_ $ "dyn" <> show value ] [ text_ $ show value ]
+    
+    , D.span [ DA.id_ "action", DL.click_ \_ -> pushClick unit ] [ text_ "end" ]
+    ]
+
 switcherWorksForCompositionalElements :: Nut
 switcherWorksForCompositionalElements = Deku.do
   let
@@ -200,7 +213,41 @@ switcherWorksForCompositionalElements = Deku.do
         ( [ 0, 1, 2 ] <#> \j -> D.span [ DA.id_ $ "id" <> show j ]
             [ text_ (show i <> "-" <> show j) ]
         )
-    , D.button [ DA.id_ "incr", DL.click_ \_ -> setItem unit ] [ text_ "incr" ]
+    , D.button
+        [ DA.id_ "incr"
+        , DL.click_ \_ -> setItem unit
+        ]
+        [ text_ "incr" ]
+    ]
+
+slightlyLessPureSwitcher :: Nut
+slightlyLessPureSwitcher = Deku.do
+  elemCtrl /\ elemCom <- useState'
+  let
+    elemCount :: Poll Int
+    elemCount =
+      fold (\c -> if _ then c + 1 else 0 ) 0 $ initial <|> elemCom
+    
+    initial :: Poll Boolean
+    initial =
+      merge $ Array.replicate 4 $ pure true 
+
+    incrElem :: Effect Unit
+    incrElem =
+      elemCtrl true
+
+    resetElem :: Effect Unit
+    resetElem = do
+        elemCtrl false
+        sequence_ $ Array.replicate 4 incrElem
+
+  D.div [ DA.id_ "div0" ]
+    [ D.span [ DA.id_ "content" ]
+      [ text_ "foo"
+      , cycle $ text_ <<< show <$> elemCount
+      ]
+    , D.button [ DA.id_ "incr", DL.click_ \_ -> incrElem ] [ text_ "incr" ]
+    , D.button [ DA.id_ "reset", DL.click_ \_ -> resetElem ] [ text_ "reset" ]
     ]
 
 tabbedNavigationWithPursx :: Nut
@@ -216,14 +263,14 @@ tabbedNavigationWithPursx = Deku.do
             [ text_ "contact" ]
         ]
     , item <#~> case _ of
-        0 -> pursx @"<h1 id=\"home\">home</h1>" {}
-        1 -> pursx @"<h1 id=\"about\">about ~me~</h1>"
+        0 -> lenientPursx "<h1 id=\"home\">home</h1>" {}
+        1 -> lenientPursx "<h1 id=\"about\">about ~me~</h1>"
           { me: text_ "deku" }
-        _ -> pursx @"<h1 id=\"contact\">contact ~a~ at ~b~ ~c~ ~d~</h1>"
+        _ -> lenientPursx "<h1 id=\"contact\">contact ~a~ at ~b~ ~c~ ~d~</h1>"
           { a: D.span_ [ text_ "mike" ]
           , b: text_ "site"
           , c: text_ "dot com"
-          , d: pursx @"<h1 id=\"thanks\">thanks</h1>" {}
+          , d: lenientPursx "<h1 id=\"thanks\">thanks</h1>" {}
           }
     ]
 
@@ -247,13 +294,6 @@ portalsCompose = Deku.do
         [ text_ "incr" ]
     ]
 
-pursXComposes :: Nut
-pursXComposes = Deku.do
-  D.div [ DA.id_ "div0" ]
-    [ pursx @"<h1 id=\"px\">début ~me~ fin</h1>"
-        { me: fixed [ text_ "milieu", text_ " ", text_ "après-milieu" ] }
-    ]
-
 pursXWiresUp :: Nut
 pursXWiresUp = Deku.do
   setMessage /\ message <- useState'
@@ -274,37 +314,25 @@ pursXWiresUp = Deku.do
     , D.span [ DA.id_ "span0" ] [ text message ]
     ]
 
-templatesWork :: Nut
-templatesWork = Deku.do
-  setSendTo /\ sendTo <- useMailboxedS
+pursXWiresUp2 :: Nut
+pursXWiresUp2 = Deku.do
+  setMessage /\ message <- useState'
   D.div [ DA.id_ "div0" ]
-    [ template @"<div>hello ~world~<button ~atts~>x</button></div>" $
-        mergeMapPure (go sendTo setSendTo)
-          [ "Helsinki", "Stockholm", "Copenhagen" ]
-    ]
-  where
-  go sendTo setSendTo s = merge
-    [ templatedMap_ (sendTo s) { sendTo: _ }
-    , pure $ Some.inj
-        { atts:
-            [ DL.click_ \_ ->
-                setSendTo $ { address: s, payload: 0 }
-            , DA.id_ s
+    [ lenientPursx
+        "<div ~mykls~><h1 id=\"px\" ~evt~ >hi</h1>début ~me~ fin</div>"
+        { me: fixed
+            [ text_ "milieu"
+            , text_ " "
+            , D.span
+                [ DL.click_ \_ -> setMessage "goodbye"
+                , DA.id_ "inny"
+                ]
+                [ text_ "après-milieu" ]
             ]
-        , world: pure s
+        , evt: DL.click_ \_ -> setMessage "hello"
+        , mykls: DA.klass_ "arrrrr" <|> DA.id_ "topdiv"
         }
-    ]
-
-templatesWork2 :: Nut
-templatesWork2 = Deku.do
-  D.div [ DA.id_ "div0" ]
-    [ template @"<div id=\"testing\">~test~ ~ing~</div>"
-        $ pure
-        $ pure
-        $ Some.inj
-            { test: pure "hello"
-            , ing: pure "world"
-            }
+    , D.span [ DA.id_ "span0" ] [ text message ]
     ]
 
 switchersCompose :: Nut
@@ -586,8 +614,8 @@ hotIsHot = Deku.do
         [ text_ "set label" ]
     ]
 
-switcherSwitches :: Nut
-switcherSwitches = Deku.do
+filtersAndRefs :: Nut
+filtersAndRefs = Deku.do
   setItem /\ item <- useState 0
   setGoodbyeC /\ goodbyeC <- useState'
   iref <- useRef (-1) item
@@ -625,6 +653,15 @@ lotsOfSwitching = Deku.do
         ]
     ]
 
+emptySwitches :: Nut
+emptySwitches = Deku.do
+  setItem /\ item <- useState 0
+  D.div [ DA.id_ "div0" ]
+    [ D.div [ DA.id_ "content" ] $ Array.range 0 5 <#> \id ->
+      guard ( eq id <$> item ) ( D.span [ DA.id_ ( show id ) ] [ text_ $ show id ] )
+    , D.div [ DA.id_ "incr", DL.click $ item <#> \st _ -> setItem $ ( st + 1 ) `mod` 6 ] [ text_ "next" ]
+    ]
+
 pureSwitches :: Nut
 pureSwitches = Deku.do
   _ /\ elem <- useState'
@@ -632,7 +669,7 @@ pureSwitches = Deku.do
     initial :: Poll Unit
     initial = merge $ Array.replicate 5 $ pure unit
 
-  ( initial <|> elem ) <#~> \e ->
+  (initial <|> elem) <#~> \e ->
     D.span [ DA.klass_ "switcherelem" ] [ text_ $ show e ]
 
 useHotRantWorks :: Nut
@@ -660,354 +697,31 @@ useHotRantWorks = Deku.do
     , guard presence $ framed "db"
     ]
 
-ocarinaExample :: Nut
-ocarinaExample = pursx @OcarinaPx
-  { allpass: text_ "hello allpass"
-  , analyser: text_ "hello analyser"
-  , drumroll: text_ "hello drumroll"
-  , next: DA.id_ "hello"
-  , toc: text_ "This is a table of contents"
-  }
+useDispose :: Effect Unit -> Effect Unit -> Hook Unit
+useDispose init eff cont = Nut $ mkEffectFn2 \psr di -> do
+  init
+  let Nut nut = cont unit
+  runEffectFn2 deferO psr eff
+  runEffectFn2 nut psr di
 
--- begin stress test
-
-randomAdjectives :: Array String
-randomAdjectives =
-  [ "pretty"
-  , "large"
-  , "big"
-  , "small"
-  , "tall"
-  , "short"
-  , "long"
-  , "handsome"
-  , "plain"
-  , "quaint"
-  , "clean"
-  , "elegant"
-  , "easy"
-  , "angry"
-  , "crazy"
-  , "helpful"
-  , "mushy"
-  , "odd"
-  , "unsightly"
-  , "adorable"
-  , "important"
-  , "inexpensive"
-  , "cheap"
-  , "expensive"
-  , "fancy"
-  ]
-
-randomColors :: Array String
-randomColors =
-  [ "red"
-  , "yellow"
-  , "blue"
-  , "green"
-  , "pink"
-  , "brown"
-  , "purple"
-  , "brown"
-  , "white"
-  , "black"
-  , "orange"
-  ]
-
-randomNouns :: Array String
-randomNouns =
-  [ "table"
-  , "chair"
-  , "house"
-  , "bbq"
-  , "desk"
-  , "car"
-  , "pony"
-  , "cookie"
-  , "sandwich"
-  , "burger"
-  , "pizza"
-  , "mouse"
-  , "keyboard"
-  ]
-
-makeRow
-  :: forall r
-   . { appendRows :: Poll (Array (Tuple Int String))
-     , swap :: Poll (Tuple String Int)
-     , rowbox :: Poll String
-     , selectbox :: Poll String
-     , remove :: Poll String
-     , unselectbox :: Poll String
-     , selectMe :: Int -> Effect Unit
-     , removeMe :: ((Int -> Effect Unit) -> Effect Unit) -> Effect Unit
-     , arr :: Array (Tuple Int String)
-     | r
-     }
-  -> Nut
-makeRow
-  { selectMe
-  , arr
-  , remove
-  , removeMe
-  , swap
-  , appendRows
-  , rowbox
-  , selectbox
-  , unselectbox
-  } = Deku.do
-  template
-    @"""<tr ~sel~ ><td class="col-md-1"> ~num~ </td><td class="col-md-4"><a ~select~ class="lbl">~label~ ~excl~</a></td><td class="col-md-1"><a ~rm~ class="remove"><span class="remove glyphicon glyphicon-remove" aria-hidden="true"></span></a></td><td class="col-md-6"></td></tr>"""
-    $ empty
-    --  merge
-    --     [ templated_ selectbox { sel: [ DA.klass_ "danger" ] }
-    --     , templated_ unselectbox { sel: [ DA.unset @"klass" $ pure unit ] }
-    --     , templated_ remove { remove: unit }
-    --     , templatedMap_ swap { sendTo: _ }
-    --     , mapAccum
-    --         ( \a b -> case Object.lookup b a of
-    --             Nothing -> Tuple (Object.insert b woah'woah'woah a)
-    --               (Tuple b woah'woah'woah)
-    --             Just e ->
-    --               let
-    --                 updated = e <> woah'woah'woah
-    --               in
-    --                 Tuple (Object.insert b updated a) (Tuple b updated)
-    --         )
-    --         Object.empty
-    --         rowbox `templatedMap_` (pure >>> { excl: _ })
-    --     -- , merge [ mergePure arr, keepLatest (map mergePure appendRows) ] `templated show` \i s ->
-    --     --     { num: pure $ show (i + 1)
-    --     --     , select: [ DL.click_ \_ -> selectMe i ]
-    --     --     , label: pure $ s
-    --     --     , rm: [ DL.click_ \_ -> removeMe \f -> f i ]
-    --     --     }
-    --     ]
-  where
-  woah'woah'woah = " !!!"
-
-makeTable
-  :: { rowBuilder :: Poll RowBuilder
-     , appendRows :: Poll (Array (Tuple Int String))
-     , swap :: Poll (Tuple String Int)
-     , pushToRow :: Int -> Effect Unit
-     , remove :: Poll String
-     , rowbox :: Poll String
-     , selectbox :: Poll String
-     , unselectbox :: Poll String
-     , selectMe :: Int -> Effect Unit
-     , removeMe :: ((Int -> Effect Unit) -> Effect Unit) -> Effect Unit
-     }
-  -> Nut
-makeTable i = do
-  D.table [ DA.klass_ "table table-hover table-striped test-data" ]
-    [ i.rowBuilder <#~> case _ of
-        AddRows arr -> D.tbody [ DA.id_ "tbody" ]
-          [ makeRow $ i `union` { arr } ]
-        Clear -> D.tbody [ DA.id_ "tbody" ] []
+disposeGetsRun :: Nut
+disposeGetsRun = Deku.do
+  pushTick /\ ticks <- useState'
+  fixed
+    [ D.span [ DA.id_ "count" ] [ text $ show <$> count ticks ]
+    , Deku.do
+      { remove } <- useDynAtBeginning ( pure unit )
+      useDispose ( pushTick unit ) ( pushTick unit )
+      D.span [ DA.id_ "notthere", DL.click_ \_ -> remove ] []
     ]
 
-data RowBuilder = AddRows (Array (Tuple Int String)) | Clear
-
-rando :: Array String -> Effect String
-rando a = do
-  ri <- randomInt 0 (Array.length a)
-  pure $ fromMaybe "foo" (a !! ri)
-
-genRows :: Int -> Int -> Effect (Array (Tuple Int String))
-genRows offset n = do
-  arr <- liftST $ STArray.new
-  foreachE (0 .. (n - 1)) \i -> do
-    adjective <- rando randomAdjectives
-    color <- rando randomColors
-    noun <- rando randomNouns
-    let label = intercalate " " [ adjective, color, noun ]
-    liftST $ void $ STArray.push (Tuple (offset + i) label) arr
-  liftST $ STArray.freeze arr
-
-data RowTransform = Start Int Int | Add Int Int | Swap | Delete Int | ClearRows
-
-doRowTransform :: Array Int -> RowTransform -> Array Int
-doRowTransform a (Add i o) = a <> (i .. (o - 1))
-doRowTransform _ (Start i o) = (i .. (o - 1))
-doRowTransform a Swap = fromMaybe a do
-  l <- a !! 1
-  r <- a !! 998
-  o <- Array.updateAt 998 l a
-  Array.updateAt 1 r o
-doRowTransform a (Delete v) = Array.delete v a
-doRowTransform _ ClearRows = []
-
-rowBuilderToN :: Int -> RowBuilder -> Int
-rowBuilderToN b (AddRows arr) = Array.length arr + b
-rowBuilderToN _ Clear = 0
-
-stressTest :: Nut
-stressTest = Deku.do
-  setRowBuilder /\ rowBuilder <- DH.useState'
-  setAppendRows /\ appendRows <- DH.useState'
-  incrementRows /\ nRowsRaw <- DH.useState'
-  nRows <- DH.useRant (fold add 0 nRowsRaw)
-  nRowsRef <- DH.useRef 0 nRows
-  setRowTransformer /\ rowTransformerRaw <- DH.useState'
-  rowTransformer <- DH.useRant (fold doRowTransform [] rowTransformerRaw)
-  rowTransformerRef <- DH.useRef [] rowTransformer
-  setSwap /\ swap <- DH.useState'
-  pushToRemove /\ remove <- DH.useState'
-  pushToRow /\ rowbox <- DH.useState'
-  pushToSelect /\ selectbox <- DH.useState'
-  pushToUnselect /\ unselectbox <- DH.useState'
-  setCurrentSelection /\ currentSelection <- DH.useHot Nothing
-  selectionRef <- DH.useRef Nothing currentSelection
-  let
-    selectMe index = do
-      pushToSelect $ Tuple (show index) unit
-      s <- selectionRef
-      setCurrentSelection $ Just index
-      for_ s \i -> do
-        pushToUnselect (Tuple (show i) unit)
-    removeMe rmEffect = do
-      rmEffect \i -> do
-        setRowTransformer $ Delete i
-        pushToRemove $ Tuple (show i) unit
-      setCurrentSelection Nothing
-  let
-    adder b f n = do
-      r <- nRowsRef
-      rows <- genRows r n
-      setRowTransformer $ (if b then Start else Add) r (r + n)
-      incrementRows n *> f rows
-  let rowAdder = adder true (setRowBuilder <<< AddRows)
-  pursx @Body
-    { table: makeTable
-        { selectMe
-        , removeMe
-        , remove: map fst remove
-        , selectbox: map fst selectbox
-        , unselectbox: map fst unselectbox
-        , rowbox: map fst rowbox
-        , swap
-        , rowBuilder
-        , appendRows
-        , pushToRow: \i -> pushToRow (Tuple (show i) unit)
-        }
-    , c1000: DL.click_ \_ -> rowAdder 1000
-    , c10000: DL.click_ \_ -> rowAdder 10000
-    , append: DL.click_ \_ -> adder false setAppendRows 1000
-    , clear: DL.click_ \_ -> do
-        setRowTransformer ClearRows
-        setRowBuilder Clear
-    , swap: DL.click_ \_ -> do
-        a <- rowTransformerRef
-        let
-          swappies = ado
-            l <- a !! 1
-            r <- a !! 998
-            in Tuple l r
-        for_ swappies \(Tuple l r) -> do
-          setSwap $ Tuple (show r) 1
-          setSwap $ Tuple (show l) 998
-        setRowTransformer Swap
-    , update: DL.runOn DL.click $ rowTransformer <#>
-        \arr -> do
-          let
-            go { i } = case arr !! i of
-              Nothing -> pure $ Done unit
-              Just head -> pushToRow (Tuple (show head) unit) $> Loop
-                { i: i + 10 }
-          tailRecM go { i: 0 }
-    }
-
-rowTemplate
-  :: { label :: Nut
-     , n :: Int
-     , selected :: Poll Unit
-     , unselected :: Poll Unit
-     , select :: Poll (Attribute (DOM.HTMLAnchorElement ()))
-     , remove :: Poll (Attribute (DOM.HTMLAnchorElement ()))
-     }
-  -> Nut
-rowTemplate { n, select, selected, unselected, label, remove } = D.tr
-  [ DA.klass $ selected $> "danger"
-  , DA.unset @"klass" (unselected $> unit)
-  ]
-  [ D.td [ DA.klass_ "col-md-1" ] [ text_ $ show (n + 1) ]
-  , D.td [ DA.klass_ "col-md-4" ]
-      [ D.a [ select, DA.klass_ "lbl" ] [ label ] ]
-  , D.td [ DA.klass_ "col-md-1" ]
-      [ D.a [ remove, DA.klass_ "remove" ]
-          [ D.span
-              [ DA.klass_ "remove glyphicon glyphicon-remove"
-              , DA.ariaHidden_ "true"
-              ]
-              []
-          ]
-      ]
-  , D.td [ DA.klass_ "col-md-6" ] []
-  ]
-
-type Body =
-  """<div id="main">
-    <div class="container">
-        <div class="jumbotron">
-            <div class="row">
-                <div class="col-md-6">
-                    <h1>Deku-"keyed"</h1>
-                </div>
-                <div class="col-md-6">
-                    <div class="row">
-                        <div class="col-sm-6 smallpad">
-                            <button ~c1000~ type="button" class="btn btn-primary btn-block" id="run">Create 1,000 rows</button>
-                        </div>
-                        <div class="col-sm-6 smallpad">
-                            <button ~c10000~ type="button" class="btn btn-primary btn-block" id="runlots">Create 10,000 rows</button>
-                        </div>
-                        <div class="col-sm-6 smallpad">
-                            <button ~append~ type="button" class="btn btn-primary btn-block" id="add">Append 1,000 rows</button>
-                        </div>
-                        <div class="col-sm-6 smallpad">
-                            <button ~update~ type="button" class="btn btn-primary btn-block" id="update">Update every 10th row</button>
-                        </div>
-                        <div class="col-sm-6 smallpad">
-                            <button ~clear~ type="button" class="btn btn-primary btn-block" id="clear">Clear</button>
-                        </div>
-                        <div class="col-sm-6 smallpad">
-                            <button ~swap~ type="button" class="btn btn-primary btn-block" id="swaprows">Swap Rows</button>
-                        </div>
-                    </div>
-                </div>
-            </div>
-        </div>
-        ~table~
-        <span class="preloadicon glyphicon glyphicon-remove" aria-hidden="true"></span>
-    </div>
-</div>"""
-
--- end stress test
-
-type OcarinaPx =
-  """<div>
-  <h1>Audio Units</h1>
-
-  <h3>There sure are a lot of them!</h3>
-  <p>
-    This section provides a tour of the web audio nodes provided by the Web Audio API and, by extension, Ocarina. There are only two omissions:</p>
-    <ul>
-      <li>Audio Worklet Nodes</li>
-      <li>Multi-channel audio</li>
-    </ul>
-    <p>Both of these will be covered in later sections.</p>
-
-  <p>
-    This section is long and should be read like those passages in the Bible that list who was the child of who: DILIGENTLY AND COPIOUSLY. That said, if you want to skip around, here's a table of contents.
-  </p>
-  ~toc~
-  <p>And now, without further ado... (~drumroll~) Here are some audio nodes!</p>
-
-  ~allpass~
-  ~analyser~
-
-  <h2>Next steps</h2>
-  <p>Phew, that was a lot of audio units! In the next section, we'll make them come alive thanks to the magic of <a ~next~ style="cursor:pointer;">events</a>.</p>
-</div>"""
+disposeGetsRunOnce :: Nut
+disposeGetsRunOnce = Deku.do
+  pushTick /\ ticks <- useState'
+  fixed
+    [ D.span [ DA.id_ "count" ] [ text $ show <$> count ticks ]
+    , Deku.do
+      { remove } <- useDynAtBeginning ( pure unit )
+      useDispose ( pushTick unit ) ( pushTick unit )
+      D.span [ DA.id_ "notthere", DL.click_ \_ -> remove ] []
+    ]

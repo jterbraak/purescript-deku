@@ -1,23 +1,45 @@
 const tests = require("./output/Test.Main");
 const testFriend = require("./output/Test.TestFriend");
 const di = require("./output/Deku.Interpret");
-const doTest = (name, closure, ionly) => {
-  (ionly ? it.only : it)(name, async () => {
+const region = require("./output/Deku.Internal.Region");
+
+const doTest = (name, closure, itIs) => {
+  doFullTest(name, closure, itIs);
+  doSSRTest(name, closure, itIs);
+};
+
+const doFullTest = (name, closure, itIs) => {
+  (itIs ? itIs : it)(name, async () => {
     await closure(async (myTest, myScript) => {
       if (!myTest) {
         throw new Error(`Cannot find test named ${name}`);
       }
       document.getElementsByTagName("html")[0].innerHTML =
         '<head></head><body id="mybody"></body>';
-      tests.runTest(myTest)();
+      const unsub = tests.runTest(myTest)();
       await myScript(false);
+      unsub();
     });
   });
 };
 
-const getIndex = (child) => {
-  var allNodes = Array.prototype.slice.call(child.parentNode.childNodes);
-  return allNodes.indexOf(child);
+const doSSRTest = (name, closure, itIs) => {
+  (itIs ? itIs : it)(`${name} SSR`, async () => {
+    await closure(async (myTest, myScript) => {
+      if (!myTest) {
+        throw new Error(`Cannot find test named ${name}`);
+      }
+      document.getElementsByTagName("html")[0].innerHTML =
+        '<head></head><body id="mybody"></body>';
+      const res = tests.runSSR(myTest)();
+      const html = res.html;
+      document.getElementsByTagName(
+        "html"
+      )[0].innerHTML = `<head></head><body id="mybody">${html}</body>`;
+      tests.runHydration(res)(myTest)();
+      await myScript(false);
+    });
+  });
 };
 
 describe("deku", () => {
@@ -26,969 +48,206 @@ describe("deku", () => {
   });
 
   describe("low-level interpreters", () => {
+    describe("RegionSpan", () => {
+      it("updates end on content bump", () => {
+        var end = testFriend.nothing;
+        var span = region.newSpan(
+          () => 10,
+          (e) => (end = e)
+        );
+        var r1 = region.allocateRegion(testFriend.nothing, span);
+        var r2 = region.allocateRegion(testFriend.nothing, span);
+
+        expect(end).toEqual(testFriend.nothing);
+        expect(r1.begin()).toEqual(10);
+        expect(r2.begin()).toEqual(10);
+
+        r1.bump(testFriend.just(1));
+        expect(end).toEqual(testFriend.just(1));
+        expect(r1.begin()).toEqual(10);
+        expect(r1.end()).toEqual(1);
+        expect(r2.begin()).toEqual(1);
+
+        r2.bump(testFriend.just(2));
+        expect(end).toEqual(testFriend.just(2));
+        expect(r1.begin()).toEqual(10);
+        expect(r1.end()).toEqual(1);
+        expect(r2.begin()).toEqual(1);
+        expect(r2.end()).toEqual(2);
+
+        r2.bump(testFriend.just(3));
+        expect(r2.end()).toEqual(3);
+        expect(end).toEqual(testFriend.just(3));
+      });
+
+      it("updates end on empty bump", () => {
+        var end = testFriend.nothing;
+        var span = region.newSpan(
+          () => 10,
+          (e) => (end = e)
+        );
+        var r1 = region.allocateRegion(testFriend.nothing, span);
+        var r2 = region.allocateRegion(testFriend.nothing, span);
+
+        expect(end).toEqual(testFriend.nothing);
+        expect(r1.begin()).toEqual(10);
+        expect(r2.begin()).toEqual(10);
+
+        r1.bump(testFriend.just(1));
+        expect(end).toEqual(testFriend.just(1));
+        expect(r1.begin()).toEqual(10);
+        expect(r1.end()).toEqual(1);
+        expect(r2.begin()).toEqual(1);
+
+        r1.bump(testFriend.nothing);
+        expect(end).toEqual(testFriend.nothing);
+        expect(r1.begin()).toEqual(10);
+        expect(r1.end()).toEqual(10);
+        expect(r2.begin()).toEqual(10);
+      });
+
+      it("updates end on sendTo", () => {
+        var end = testFriend.nothing;
+        var span = region.newSpan(
+          () => 10,
+          (e) => (end = e)
+        );
+        var r1 = region.allocateRegion(testFriend.nothing, span);
+        var r2 = region.allocateRegion(testFriend.nothing, span);
+
+        r1.bump(testFriend.just(1));
+        r2.bump(testFriend.just(2));
+
+        expect(end).toEqual(testFriend.just(2));
+        r2.sendTo(0);
+        expect(end).toEqual(testFriend.just(1));
+        r2.sendTo(1);
+        expect(end).toEqual(testFriend.just(2));
+        r1.bump(testFriend.nothing);
+        expect(end).toEqual(testFriend.just(2));
+        r2.sendTo(0);
+        expect(end).toEqual(testFriend.just(2));
+      });
+
+      it("updates end on remove", () => {
+        var end = testFriend.nothing;
+        var span = region.newSpan(
+          () => 10,
+          (e) => (end = e)
+        );
+        var r1 = region.allocateRegion(testFriend.nothing, span);
+        var r2 = region.allocateRegion(testFriend.nothing, span);
+
+        r1.bump(testFriend.just(1));
+        r2.bump(testFriend.just(2));
+
+        expect(end).toEqual(testFriend.just(2));
+        r2.remove();
+        expect(end).toEqual(testFriend.just(1));
+        var r3 = region.allocateRegion(testFriend.nothing, span);
+        r3.bump(testFriend.just(3));
+        expect(end).toEqual(testFriend.just(3));
+        r1.remove();
+        expect(end).toEqual(testFriend.just(3));
+        r3.remove();
+        expect(end).toEqual(testFriend.nothing);
+      });
+    });
+
     it("makeElementEffect makes an element with the correct tagname", () => {
-      const out = di.makeElementEffect(testFriend.nothing, "div");
+      const out = di.makeElementEffect(
+        testFriend.dummyId,
+        testFriend.nothing,
+        "div"
+      );
       expect(out.tagName).toBe("DIV");
-    });
-    describe("attributeDynParentForElementEffect,", () => {
-      it("attriubtes correctly when pos is 0 and no children present", () => {
-        const $ = require("jquery");
-        const elt = di.makeElementEffect(testFriend.nothing, "li");
-        const oBeacon = di.makeOpenBeaconEffect();
-        const cBeacon = di.makeCloseBeaconEffect();
-        const parent = di.makeElementEffect(testFriend.nothing, "ul");
-        di.attributeBeaconParentEffect(oBeacon, parent);
-        di.attributeBeaconParentEffect(cBeacon, parent);
-        di.attributeDynParentForElementEffect(
-          testFriend.unlucky(),
-          elt,
-          oBeacon,
-          cBeacon,
-          testFriend.just(0)
-        );
-        expect(getIndex(oBeacon)).toBe(0);
-        expect(getIndex(elt)).toBe(1);
-        expect(getIndex(cBeacon)).toBe(2);
-      });
-      it("attriubtes correctly when pos is 1 and no children present", () => {
-        const $ = require("jquery");
-        const elt = di.makeElementEffect(testFriend.nothing, "li");
-        const oBeacon = di.makeOpenBeaconEffect();
-        const cBeacon = di.makeCloseBeaconEffect();
-        const parent = di.makeElementEffect(testFriend.nothing, "ul");
-        di.attributeBeaconParentEffect(oBeacon, parent);
-        di.attributeBeaconParentEffect(cBeacon, parent);
-        di.attributeDynParentForElementEffect(
-          testFriend.unlucky(),
-          elt,
-          oBeacon,
-          cBeacon,
-          testFriend.just(1)
-        );
-        expect(getIndex(oBeacon)).toBe(0);
-        expect(getIndex(elt)).toBe(1);
-        expect(getIndex(cBeacon)).toBe(2);
-      });
-      it("attriubtes correctly when pos is 42 and no children present", () => {
-        const $ = require("jquery");
-        const elt = di.makeElementEffect(testFriend.nothing, "li");
-        const oBeacon = di.makeOpenBeaconEffect();
-        const cBeacon = di.makeCloseBeaconEffect();
-        const parent = di.makeElementEffect(testFriend.nothing, "ul");
-        di.attributeBeaconParentEffect(oBeacon, parent);
-        di.attributeBeaconParentEffect(cBeacon, parent);
-        di.attributeDynParentForElementEffect(
-          testFriend.unlucky(),
-          elt,
-          oBeacon,
-          cBeacon,
-          testFriend.just(42)
-        );
-        expect(getIndex(oBeacon)).toBe(0);
-        expect(getIndex(elt)).toBe(1);
-        expect(getIndex(cBeacon)).toBe(2);
-      });
-      it("attriubtes correctly when pos is Nothing and no children present", () => {
-        const $ = require("jquery");
-        const elt = di.makeElementEffect(testFriend.nothing, "li");
-        const oBeacon = di.makeOpenBeaconEffect();
-        const cBeacon = di.makeCloseBeaconEffect();
-        const parent = di.makeElementEffect(testFriend.nothing, "ul");
-        di.attributeBeaconParentEffect(oBeacon, parent);
-        di.attributeBeaconParentEffect(cBeacon, parent);
-        di.attributeDynParentForElementEffect(
-          testFriend.unlucky(),
-          elt,
-          oBeacon,
-          cBeacon,
-          testFriend.nothing
-        );
-        expect(getIndex(oBeacon)).toBe(0);
-        expect(getIndex(elt)).toBe(1);
-        expect(getIndex(cBeacon)).toBe(2);
-      });
-      /////
-      it("attriubtes correctly when pos is 0 and several children present", () => {
-        const $ = require("jquery");
-        const elt = di.makeElementEffect(testFriend.nothing, "li");
-        const oBeacon = di.makeOpenBeaconEffect();
-        const cBeacon = di.makeCloseBeaconEffect();
-        const parent = di.makeElementEffect(testFriend.nothing, "ul");
-        di.attributeBeaconParentEffect(oBeacon, parent);
-        const n = 42;
-        for (var i = 0; i < n; i++) {
-          const elt2 = di.makeElementEffect(testFriend.nothing, "li");
-          di.attributeElementParentEffect(elt2, parent);
-        }
-        di.attributeBeaconParentEffect(cBeacon, parent);
-        di.attributeDynParentForElementEffect(
-          testFriend.unlucky(),
-          elt,
-          oBeacon,
-          cBeacon,
-          testFriend.just(0)
-        );
-        expect(getIndex(oBeacon)).toBe(0);
-        expect(getIndex(elt)).toBe(1);
-        expect(getIndex(cBeacon)).toBe(n + 2);
-      });
-      it("attriubtes correctly when pos is 25 and several children present", () => {
-        const $ = require("jquery");
-        const elt = di.makeElementEffect(testFriend.nothing, "li");
-        const oBeacon = di.makeOpenBeaconEffect();
-        const cBeacon = di.makeCloseBeaconEffect();
-        const parent = di.makeElementEffect(testFriend.nothing, "ul");
-        di.attributeBeaconParentEffect(oBeacon, parent);
-        const n = 42;
-        for (var i = 0; i < n; i++) {
-          const elt2 = di.makeElementEffect(testFriend.nothing, "li");
-          di.attributeElementParentEffect(elt2, parent);
-        }
-        di.attributeBeaconParentEffect(cBeacon, parent);
-        const mpos = 25;
-        di.attributeDynParentForElementEffect(
-          testFriend.unlucky(),
-          elt,
-          oBeacon,
-          cBeacon,
-          testFriend.just(mpos)
-        );
-        expect(getIndex(oBeacon)).toBe(0);
-        expect(getIndex(elt)).toBe(mpos + 1);
-        expect(getIndex(cBeacon)).toBe(n + 2);
-      });
-      it("attriubtes correctly when pos is 138 and only 42 children present", () => {
-        const $ = require("jquery");
-        const elt = di.makeElementEffect(testFriend.nothing, "li");
-        const oBeacon = di.makeOpenBeaconEffect();
-        const cBeacon = di.makeCloseBeaconEffect();
-        const parent = di.makeElementEffect(testFriend.nothing, "ul");
-        di.attributeBeaconParentEffect(oBeacon, parent);
-        const n = 42;
-        for (var i = 0; i < n; i++) {
-          const elt2 = di.makeElementEffect(testFriend.nothing, "li");
-          di.attributeElementParentEffect(elt2, parent);
-        }
-        di.attributeBeaconParentEffect(cBeacon, parent);
-        di.attributeDynParentForElementEffect(
-          testFriend.unlucky(),
-          elt,
-          oBeacon,
-          cBeacon,
-          testFriend.just(138)
-        );
-        expect(getIndex(oBeacon)).toBe(0);
-        expect(getIndex(elt)).toBe(n + 1);
-        expect(getIndex(cBeacon)).toBe(n + 2);
-      });
-      it("attriubtes correctly when pos is Nothing and 42 children present", () => {
-        const $ = require("jquery");
-        const elt = di.makeElementEffect(testFriend.nothing, "li");
-        const oBeacon = di.makeOpenBeaconEffect();
-        const cBeacon = di.makeCloseBeaconEffect();
-        const parent = di.makeElementEffect(testFriend.nothing, "ul");
-        di.attributeBeaconParentEffect(oBeacon, parent);
-        const n = 42;
-        for (var i = 0; i < n; i++) {
-          const elt2 = di.makeElementEffect(testFriend.nothing, "li");
-          di.attributeElementParentEffect(elt2, parent);
-        }
-        di.attributeBeaconParentEffect(cBeacon, parent);
-        di.attributeDynParentForElementEffect(
-          testFriend.unlucky(),
-          elt,
-          oBeacon,
-          cBeacon,
-          testFriend.nothing
-        );
-        expect(getIndex(oBeacon)).toBe(0);
-        expect(getIndex(elt)).toBe(n + 1);
-        expect(getIndex(cBeacon)).toBe(n + 2);
-      });
-      //////
-      it("attriubtes correctly when pos is 0, several children are present, and there are elements on the left and right", () => {
-        const $ = require("jquery");
-        const elt = di.makeElementEffect(testFriend.nothing, "li");
-        const oBeacon = di.makeOpenBeaconEffect();
-        const cBeacon = di.makeCloseBeaconEffect();
-        const parent = di.makeElementEffect(testFriend.nothing, "ul");
-        const j = 7;
-        for (var i = 0; i < j; i++) {
-          const elt2 = di.makeElementEffect(testFriend.nothing, "li");
-          di.attributeElementParentEffect(elt2, parent);
-        }
-        di.attributeBeaconParentEffect(oBeacon, parent);
-        const n = 42;
-        for (var i = 0; i < n; i++) {
-          const elt2 = di.makeElementEffect(testFriend.nothing, "li");
-          di.attributeElementParentEffect(elt2, parent);
-        }
-        di.attributeBeaconParentEffect(cBeacon, parent);
-        const k = 108;
-        for (var i = 0; i < k; i++) {
-          const elt2 = di.makeElementEffect(testFriend.nothing, "li");
-          di.attributeElementParentEffect(elt2, parent);
-        }
-        di.attributeDynParentForElementEffect(
-          testFriend.unlucky(),
-          elt,
-          oBeacon,
-          cBeacon,
-          testFriend.just(0)
-        );
-        expect(getIndex(oBeacon)).toBe(j);
-        expect(getIndex(elt)).toBe(j + 1);
-        expect(getIndex(cBeacon)).toBe(j + n + 2);
-      });
-      it("attriubtes correctly when pos is 38, several children are present, and there are elements on the left and right", () => {
-        const $ = require("jquery");
-        const elt = di.makeElementEffect(testFriend.nothing, "li");
-        const oBeacon = di.makeOpenBeaconEffect();
-        const cBeacon = di.makeCloseBeaconEffect();
-        const parent = di.makeElementEffect(testFriend.nothing, "ul");
-        const j = 7;
-        for (var i = 0; i < j; i++) {
-          const elt2 = di.makeElementEffect(testFriend.nothing, "li");
-          di.attributeElementParentEffect(elt2, parent);
-        }
-        di.attributeBeaconParentEffect(oBeacon, parent);
-        const n = 42;
-        for (var i = 0; i < n; i++) {
-          const elt2 = di.makeElementEffect(testFriend.nothing, "li");
-          di.attributeElementParentEffect(elt2, parent);
-        }
-        di.attributeBeaconParentEffect(cBeacon, parent);
-        const k = 108;
-        for (var i = 0; i < k; i++) {
-          const elt2 = di.makeElementEffect(testFriend.nothing, "li");
-          di.attributeElementParentEffect(elt2, parent);
-        }
-        const mpos = 38;
-        di.attributeDynParentForElementEffect(
-          testFriend.unlucky(),
-          elt,
-          oBeacon,
-          cBeacon,
-          testFriend.just(mpos)
-        );
-        expect(getIndex(oBeacon)).toBe(j);
-        expect(getIndex(elt)).toBe(j + mpos + 1);
-        expect(getIndex(cBeacon)).toBe(j + n + 2);
-      });
-      it("attriubtes correctly when pos is 4242, not that many children are present, and there are elements on the left and right", () => {
-        const $ = require("jquery");
-        const elt = di.makeElementEffect(testFriend.nothing, "li");
-        const oBeacon = di.makeOpenBeaconEffect();
-        const cBeacon = di.makeCloseBeaconEffect();
-        const parent = di.makeElementEffect(testFriend.nothing, "ul");
-        const j = 7;
-        for (var i = 0; i < j; i++) {
-          const elt2 = di.makeElementEffect(testFriend.nothing, "li");
-          di.attributeElementParentEffect(elt2, parent);
-        }
-        di.attributeBeaconParentEffect(oBeacon, parent);
-        const n = 42;
-        for (var i = 0; i < n; i++) {
-          const elt2 = di.makeElementEffect(testFriend.nothing, "li");
-          di.attributeElementParentEffect(elt2, parent);
-        }
-        di.attributeBeaconParentEffect(cBeacon, parent);
-        const k = 108;
-        for (var i = 0; i < k; i++) {
-          const elt2 = di.makeElementEffect(testFriend.nothing, "li");
-          di.attributeElementParentEffect(elt2, parent);
-        }
-        const mpos = 4242;
-        di.attributeDynParentForElementEffect(
-          testFriend.unlucky(),
-          elt,
-          oBeacon,
-          cBeacon,
-          testFriend.just(mpos)
-        );
-        expect(getIndex(oBeacon)).toBe(j);
-        expect(getIndex(elt)).toBe(j + n + 1);
-        expect(getIndex(cBeacon)).toBe(j + n + 2);
-      });
-      it("attriubtes correctly when pos is Nothing, not that many children are present, and there are elements on the left and right", () => {
-        const $ = require("jquery");
-        const elt = di.makeElementEffect(testFriend.nothing, "li");
-        const oBeacon = di.makeOpenBeaconEffect();
-        const cBeacon = di.makeCloseBeaconEffect();
-        const parent = di.makeElementEffect(testFriend.nothing, "ul");
-        const j = 7;
-        for (var i = 0; i < j; i++) {
-          const elt2 = di.makeElementEffect(testFriend.nothing, "li");
-          di.attributeElementParentEffect(elt2, parent);
-        }
-        di.attributeBeaconParentEffect(oBeacon, parent);
-        const n = 42;
-        for (var i = 0; i < n; i++) {
-          const elt2 = di.makeElementEffect(testFriend.nothing, "li");
-          di.attributeElementParentEffect(elt2, parent);
-        }
-        di.attributeBeaconParentEffect(cBeacon, parent);
-        const k = 108;
-        for (var i = 0; i < k; i++) {
-          const elt2 = di.makeElementEffect(testFriend.nothing, "li");
-          di.attributeElementParentEffect(elt2, parent);
-        }
-        di.attributeDynParentForElementEffect(
-          testFriend.unlucky(),
-          elt,
-          oBeacon,
-          cBeacon,
-          testFriend.nothing
-        );
-        expect(getIndex(oBeacon)).toBe(j);
-        expect(getIndex(elt)).toBe(j + n + 1);
-        expect(getIndex(cBeacon)).toBe(j + n + 2);
-      });
-      /////
-      it("attriubtes correctly when pos is 0, stuff is on the left and right, and there are many nested empty dyns", () => {
-        const $ = require("jquery");
-        const elt = di.makeElementEffect(testFriend.nothing, "li");
-        const oBeacon = di.makeOpenBeaconEffect();
-        const cBeacon = di.makeCloseBeaconEffect();
-        const parent = di.makeElementEffect(testFriend.nothing, "ul");
-        const j = 7;
-        for (var i = 0; i < j; i++) {
-          const elt2 = di.makeElementEffect(testFriend.nothing, "li");
-          di.attributeElementParentEffect(elt2, parent);
-        }
-        di.attributeBeaconParentEffect(oBeacon, parent);
-        const n = 42;
-        for (var i = 0; i < n; i++) {
-          const od2 = di.makeOpenBeaconEffect();
-          di.attributeElementParentEffect(od2, parent);
-        }
-        for (var i = 0; i < n; i++) {
-          const od2 = di.makeCloseBeaconEffect();
-          di.attributeElementParentEffect(od2, parent);
-        }
-        di.attributeBeaconParentEffect(cBeacon, parent);
-        const k = 108;
-        for (var i = 0; i < k; i++) {
-          const elt2 = di.makeElementEffect(testFriend.nothing, "li");
-          di.attributeElementParentEffect(elt2, parent);
-        }
-        di.attributeDynParentForElementEffect(
-          testFriend.unlucky(),
-          elt,
-          oBeacon,
-          cBeacon,
-          testFriend.just(0)
-        );
-        expect(getIndex(oBeacon)).toBe(j);
-        expect(getIndex(elt)).toBe(j + 1);
-        expect(getIndex(cBeacon)).toBe(j + n + n + 2);
-      });
-      /////
-      it("attriubtes correctly when pos is 1, stuff is on the left and right, and there are many nested empty dyns", () => {
-        const $ = require("jquery");
-        const elt = di.makeElementEffect(testFriend.nothing, "li");
-        const oBeacon = di.makeOpenBeaconEffect();
-        const cBeacon = di.makeCloseBeaconEffect();
-        const parent = di.makeElementEffect(testFriend.nothing, "ul");
-        const j = 7;
-        for (var i = 0; i < j; i++) {
-          const elt2 = di.makeElementEffect(testFriend.nothing, "li");
-          di.attributeElementParentEffect(elt2, parent);
-        }
-        di.attributeBeaconParentEffect(oBeacon, parent);
-        const n = 17;
-        for (var i = 0; i < n; i++) {
-          const od2 = di.makeOpenBeaconEffect();
-          di.attributeBeaconParentEffect(od2, parent);
-        }
-        for (var i = 0; i < n; i++) {
-          const od2 = di.makeCloseBeaconEffect();
-          di.attributeBeaconParentEffect(od2, parent);
-        }
-        di.attributeBeaconParentEffect(cBeacon, parent);
-        const k = 108;
-        for (var i = 0; i < k; i++) {
-          const elt2 = di.makeElementEffect(testFriend.nothing, "li");
-          di.attributeElementParentEffect(elt2, parent);
-        }
-        di.attributeDynParentForElementEffect(
-          testFriend.unlucky(),
-          elt,
-          oBeacon,
-          cBeacon,
-          testFriend.just(1)
-        );
-        expect(getIndex(oBeacon)).toBe(j);
-        expect(getIndex(elt)).toBe(j + n + n + 1);
-        expect(getIndex(cBeacon)).toBe(j + n + n + 2);
-      });
-      it("attriubtes correctly when pos is 2, stuff is on the left and right, and there are many nested empty dyns", () => {
-        const $ = require("jquery");
-        const elt = di.makeElementEffect(testFriend.nothing, "li");
-        const oBeacon = di.makeOpenBeaconEffect();
-        const cBeacon = di.makeCloseBeaconEffect();
-        const parent = di.makeElementEffect(testFriend.nothing, "ul");
-        const j = 7;
-        for (var i = 0; i < j; i++) {
-          const elt2 = di.makeElementEffect(testFriend.nothing, "li");
-          di.attributeElementParentEffect(elt2, parent);
-        }
-        di.attributeBeaconParentEffect(oBeacon, parent);
-        const n = 19;
-        for (var i = 0; i < n; i++) {
-          const od2 = di.makeOpenBeaconEffect();
-          di.attributeBeaconParentEffect(od2, parent);
-        }
-        for (var i = 0; i < n; i++) {
-          const od2 = di.makeCloseBeaconEffect();
-          di.attributeBeaconParentEffect(od2, parent);
-        }
-        di.attributeBeaconParentEffect(cBeacon, parent);
-        const k = 108;
-        for (var i = 0; i < k; i++) {
-          const elt2 = di.makeElementEffect(testFriend.nothing, "li");
-          di.attributeElementParentEffect(elt2, parent);
-        }
-        di.attributeDynParentForElementEffect(
-          testFriend.unlucky(),
-          elt,
-          oBeacon,
-          cBeacon,
-          testFriend.just(2)
-        );
-        expect(getIndex(oBeacon)).toBe(j);
-        expect(getIndex(elt)).toBe(j + n + n + 1);
-        expect(getIndex(cBeacon)).toBe(j + n + n + 2);
-      });
-      it("attriubtes correctly when pos is Nothing, stuff is on the left and right, and there are many nested empty dyns", () => {
-        const $ = require("jquery");
-        const elt = di.makeElementEffect(testFriend.nothing, "li");
-        const oBeacon = di.makeOpenBeaconEffect();
-        const cBeacon = di.makeCloseBeaconEffect();
-        const parent = di.makeElementEffect(testFriend.nothing, "ul");
-        const j = 7;
-        for (var i = 0; i < j; i++) {
-          const elt2 = di.makeElementEffect(testFriend.nothing, "li");
-          di.attributeElementParentEffect(elt2, parent);
-        }
-        di.attributeBeaconParentEffect(oBeacon, parent);
-        const n = 5;
-        for (var i = 0; i < n; i++) {
-          const od2 = di.makeOpenBeaconEffect();
-          di.attributeBeaconParentEffect(od2, parent);
-        }
-        for (var i = 0; i < n; i++) {
-          const od2 = di.makeCloseBeaconEffect();
-          di.attributeBeaconParentEffect(od2, parent);
-        }
-        di.attributeBeaconParentEffect(cBeacon, parent);
-        const k = 108;
-        for (var i = 0; i < k; i++) {
-          const elt2 = di.makeElementEffect(testFriend.nothing, "li");
-          di.attributeElementParentEffect(elt2, parent);
-        }
-        di.attributeDynParentForElementEffect(
-          testFriend.unlucky(),
-          elt,
-          oBeacon,
-          cBeacon,
-          testFriend.nothing
-        );
-        expect(getIndex(oBeacon)).toBe(j);
-        expect(getIndex(elt)).toBe(j + n + n + 1);
-        expect(getIndex(cBeacon)).toBe(j + n + n + 2);
-      });
-      ////
-      it("attriubtes correctly when pos is 1, stuff is on the left and right, and there are many nested empty dyns twice over", () => {
-        const $ = require("jquery");
-        const elt = di.makeElementEffect(testFriend.nothing, "li");
-        const oBeacon = di.makeOpenBeaconEffect();
-        const cBeacon = di.makeCloseBeaconEffect();
-        const parent = di.makeElementEffect(testFriend.nothing, "ul");
-        const j = 7;
-        for (var i = 0; i < j; i++) {
-          const elt2 = di.makeElementEffect(testFriend.nothing, "li");
-          di.attributeElementParentEffect(elt2, parent);
-        }
-        di.attributeBeaconParentEffect(oBeacon, parent);
-        const n = 16;
-        for (var i = 0; i < n; i++) {
-          const od2 = di.makeOpenBeaconEffect();
-          di.attributeBeaconParentEffect(od2, parent);
-        }
-        for (var i = 0; i < n; i++) {
-          const od2 = di.makeCloseBeaconEffect();
-          di.attributeBeaconParentEffect(od2, parent);
-        }
-        for (var i = 0; i < n; i++) {
-          const od2 = di.makeOpenBeaconEffect();
-          di.attributeBeaconParentEffect(od2, parent);
-        }
-        for (var i = 0; i < n; i++) {
-          const od2 = di.makeCloseBeaconEffect();
-          di.attributeBeaconParentEffect(od2, parent);
-        }
-        di.attributeBeaconParentEffect(cBeacon, parent);
-        const k = 108;
-        for (var i = 0; i < k; i++) {
-          const elt2 = di.makeElementEffect(testFriend.nothing, "li");
-          di.attributeElementParentEffect(elt2, parent);
-        }
-        di.attributeDynParentForElementEffect(
-          testFriend.unlucky(),
-          elt,
-          oBeacon,
-          cBeacon,
-          testFriend.just(1)
-        );
-        expect(getIndex(oBeacon)).toBe(j);
-        expect(getIndex(elt)).toBe(j + n + n + 1);
-        expect(getIndex(cBeacon)).toBe(j + n + n + n + n + 2);
-      });
-      it("attriubtes correctly when pos is 2, stuff is on the left and right, and there are many nested empty dyns twice over", () => {
-        const $ = require("jquery");
-        const elt = di.makeElementEffect(testFriend.nothing, "li");
-        const oBeacon = di.makeOpenBeaconEffect();
-        const cBeacon = di.makeCloseBeaconEffect();
-        const parent = di.makeElementEffect(testFriend.nothing, "ul");
-        const j = 7;
-        for (var i = 0; i < j; i++) {
-          const elt2 = di.makeElementEffect(testFriend.nothing, "li");
-          di.attributeElementParentEffect(elt2, parent);
-        }
-        di.attributeBeaconParentEffect(oBeacon, parent);
-        const n = 9;
-        for (var i = 0; i < n; i++) {
-          const od2 = di.makeOpenBeaconEffect();
-          di.attributeBeaconParentEffect(od2, parent);
-        }
-        for (var i = 0; i < n; i++) {
-          const od2 = di.makeCloseBeaconEffect();
-          di.attributeBeaconParentEffect(od2, parent);
-        }
-        for (var i = 0; i < n; i++) {
-          const od2 = di.makeOpenBeaconEffect();
-          di.attributeBeaconParentEffect(od2, parent);
-        }
-        for (var i = 0; i < n; i++) {
-          const od2 = di.makeCloseBeaconEffect();
-          di.attributeBeaconParentEffect(od2, parent);
-        }
-        di.attributeBeaconParentEffect(cBeacon, parent);
-        const k = 108;
-        for (var i = 0; i < k; i++) {
-          const elt2 = di.makeElementEffect(testFriend.nothing, "li");
-          di.attributeElementParentEffect(elt2, parent);
-        }
-        di.attributeDynParentForElementEffect(
-          testFriend.unlucky(),
-          elt,
-          oBeacon,
-          cBeacon,
-          testFriend.just(2)
-        );
-        expect(getIndex(oBeacon)).toBe(j);
-        expect(getIndex(elt)).toBe(j + n + n + n + n + 1);
-        expect(getIndex(cBeacon)).toBe(j + n + n + n + n + 2);
-      });
-      ////
-      it("attriubtes correctly when pos is 1, stuff is on the left and right, and there are many nested dyns twice over with elements inside of them", () => {
-        const $ = require("jquery");
-        const elt = di.makeElementEffect(testFriend.nothing, "li");
-        const oBeacon = di.makeOpenBeaconEffect();
-        const cBeacon = di.makeCloseBeaconEffect();
-        const parent = di.makeElementEffect(testFriend.nothing, "ul");
-        const j = 7;
-        for (var i = 0; i < j; i++) {
-          const elt2 = di.makeElementEffect(testFriend.nothing, "li");
-          di.attributeElementParentEffect(elt2, parent);
-        }
-        di.attributeBeaconParentEffect(oBeacon, parent);
-        const n = 16;
-        for (var i = 0; i < n; i++) {
-          const od2 = di.makeOpenBeaconEffect();
-          di.attributeBeaconParentEffect(od2, parent);
-          const elt2 = di.makeElementEffect(testFriend.nothing, "li");
-          di.attributeBeaconParentEffect(elt2, parent);
-        }
-        for (var i = 0; i < n; i++) {
-          const od2 = di.makeCloseBeaconEffect();
-          di.attributeBeaconParentEffect(od2, parent);
-        }
-        for (var i = 0; i < n; i++) {
-          const od2 = di.makeOpenBeaconEffect();
-          di.attributeBeaconParentEffect(od2, parent);
-          const elt2 = di.makeElementEffect(testFriend.nothing, "li");
-          di.attributeBeaconParentEffect(elt2, parent);
-          const elt3 = di.makeElementEffect(testFriend.nothing, "li");
-          di.attributeBeaconParentEffect(elt3, parent);
-        }
-        for (var i = 0; i < n; i++) {
-          const od2 = di.makeCloseBeaconEffect();
-          di.attributeBeaconParentEffect(od2, parent);
-        }
-        di.attributeBeaconParentEffect(cBeacon, parent);
-        const k = 108;
-        for (var i = 0; i < k; i++) {
-          const elt2 = di.makeElementEffect(testFriend.nothing, "li");
-          di.attributeElementParentEffect(elt2, parent);
-        }
-        di.attributeDynParentForElementEffect(
-          testFriend.unlucky(),
-          elt,
-          oBeacon,
-          cBeacon,
-          testFriend.just(1)
-        );
-        expect(getIndex(oBeacon)).toBe(j);
-        expect(getIndex(elt)).toBe(j + 2 * n + n + 1);
-        expect(getIndex(cBeacon)).toBe(j + 2 * n + n + 3 * n + n + 2);
-      });
-      it("attriubtes correctly when pos is 2, stuff is on the left and right, and there are many nested dyns twice over with elements inside of them", () => {
-        const $ = require("jquery");
-        const elt = di.makeElementEffect(testFriend.nothing, "li");
-        const oBeacon = di.makeOpenBeaconEffect();
-        const cBeacon = di.makeCloseBeaconEffect();
-        const parent = di.makeElementEffect(testFriend.nothing, "ul");
-        const j = 7;
-        for (var i = 0; i < j; i++) {
-          const elt2 = di.makeElementEffect(testFriend.nothing, "li");
-          di.attributeElementParentEffect(elt2, parent);
-        }
-        di.attributeBeaconParentEffect(oBeacon, parent);
-        const n = 16;
-        for (var i = 0; i < n; i++) {
-          const od2 = di.makeOpenBeaconEffect();
-          di.attributeBeaconParentEffect(od2, parent);
-        }
-        for (var i = 0; i < n; i++) {
-          const elt2 = di.makeElementEffect(testFriend.nothing, "li");
-          di.attributeBeaconParentEffect(elt2, parent);
-          const od2 = di.makeCloseBeaconEffect();
-          di.attributeBeaconParentEffect(od2, parent);
-        }
-        for (var i = 0; i < n; i++) {
-          const od2 = di.makeOpenBeaconEffect();
-          di.attributeBeaconParentEffect(od2, parent);
-          const elt2 = di.makeElementEffect(testFriend.nothing, "li");
-          di.attributeBeaconParentEffect(elt2, parent);
-          const elt3 = di.makeElementEffect(testFriend.nothing, "li");
-          di.attributeBeaconParentEffect(elt3, parent);
-        }
-        for (var i = 0; i < n; i++) {
-          const od2 = di.makeCloseBeaconEffect();
-          di.attributeBeaconParentEffect(od2, parent);
-        }
-        di.attributeBeaconParentEffect(cBeacon, parent);
-        const k = 108;
-        for (var i = 0; i < k; i++) {
-          const elt2 = di.makeElementEffect(testFriend.nothing, "li");
-          di.attributeElementParentEffect(elt2, parent);
-        }
-        di.attributeDynParentForElementEffect(
-          testFriend.unlucky(),
-          elt,
-          oBeacon,
-          cBeacon,
-          testFriend.just(2)
-        );
-        expect(getIndex(oBeacon)).toBe(j);
-        expect(getIndex(elt)).toBe(j + 2 * n + n + 3 * n + n + 1);
-        expect(getIndex(cBeacon)).toBe(j + 2 * n + n + 3 * n + n + 2);
-      });
-    });
-    describe("attributeDynParentForBeaconsEffect", () => {
-      it("attriubtes correctly when pos is 1, stuff is on the left and right, and there are many nested dyns twice over with elements inside of them", () => {
-        const $ = require("jquery");
-        const newOBeacon = di.makeOpenBeaconEffect();
-        const newCBeacon = di.makeOpenBeaconEffect();
-        const oBeacon = di.makeOpenBeaconEffect();
-        const cBeacon = di.makeCloseBeaconEffect();
-        const parent = di.makeElementEffect(testFriend.nothing, "ul");
-        const j = 7;
-        for (var i = 0; i < j; i++) {
-          const elt2 = di.makeElementEffect(testFriend.nothing, "li");
-          di.attributeElementParentEffect(elt2, parent);
-        }
-        di.attributeBeaconParentEffect(oBeacon, parent);
-        const n = 16;
-        for (var i = 0; i < n; i++) {
-          const od2 = di.makeOpenBeaconEffect();
-          di.attributeBeaconParentEffect(od2, parent);
-          const elt2 = di.makeElementEffect(testFriend.nothing, "li");
-          di.attributeBeaconParentEffect(elt2, parent);
-        }
-        for (var i = 0; i < n; i++) {
-          const od2 = di.makeCloseBeaconEffect();
-          di.attributeBeaconParentEffect(od2, parent);
-        }
-        for (var i = 0; i < n; i++) {
-          const od2 = di.makeOpenBeaconEffect();
-          di.attributeBeaconParentEffect(od2, parent);
-          const elt2 = di.makeElementEffect(testFriend.nothing, "li");
-          di.attributeBeaconParentEffect(elt2, parent);
-          const elt3 = di.makeElementEffect(testFriend.nothing, "li");
-          di.attributeBeaconParentEffect(elt3, parent);
-        }
-        for (var i = 0; i < n; i++) {
-          const od2 = di.makeCloseBeaconEffect();
-          di.attributeBeaconParentEffect(od2, parent);
-        }
-        di.attributeBeaconParentEffect(cBeacon, parent);
-        const k = 108;
-        for (var i = 0; i < k; i++) {
-          const elt2 = di.makeElementEffect(testFriend.nothing, "li");
-          di.attributeElementParentEffect(elt2, parent);
-        }
-        di.attributeDynParentForBeaconsEffect(
-          newOBeacon,
-          newCBeacon,
-          oBeacon,
-          cBeacon,
-          testFriend.just(1)
-        );
-        expect(getIndex(oBeacon)).toBe(j);
-        expect(getIndex(newOBeacon)).toBe(j + 2 * n + n + 1);
-        expect(getIndex(newCBeacon)).toBe(j + 2 * n + n + 2);
-        expect(getIndex(cBeacon)).toBe(j + 2 * n + n + 3 * n + n + 3);
-      });
-      it("attriubtes correctly when pos is 2, stuff is on the left and right, and there are many nested dyns twice over with elements inside of them", () => {
-        const $ = require("jquery");
-        const newOBeacon = di.makeOpenBeaconEffect();
-        const newCBeacon = di.makeOpenBeaconEffect();
-        const oBeacon = di.makeOpenBeaconEffect();
-        const cBeacon = di.makeCloseBeaconEffect();
-        const parent = di.makeElementEffect(testFriend.nothing, "ul");
-        const j = 7;
-        for (var i = 0; i < j; i++) {
-          const elt2 = di.makeElementEffect(testFriend.nothing, "li");
-          di.attributeElementParentEffect(elt2, parent);
-        }
-        di.attributeBeaconParentEffect(oBeacon, parent);
-        const n = 16;
-        for (var i = 0; i < n; i++) {
-          const od2 = di.makeOpenBeaconEffect();
-          di.attributeBeaconParentEffect(od2, parent);
-        }
-        for (var i = 0; i < n; i++) {
-          const elt2 = di.makeElementEffect(testFriend.nothing, "li");
-          di.attributeBeaconParentEffect(elt2, parent);
-          const od2 = di.makeCloseBeaconEffect();
-          di.attributeBeaconParentEffect(od2, parent);
-        }
-        for (var i = 0; i < n; i++) {
-          const od2 = di.makeOpenBeaconEffect();
-          di.attributeBeaconParentEffect(od2, parent);
-          const elt2 = di.makeElementEffect(testFriend.nothing, "li");
-          di.attributeBeaconParentEffect(elt2, parent);
-          const elt3 = di.makeElementEffect(testFriend.nothing, "li");
-          di.attributeBeaconParentEffect(elt3, parent);
-        }
-        for (var i = 0; i < n; i++) {
-          const od2 = di.makeCloseBeaconEffect();
-          di.attributeBeaconParentEffect(od2, parent);
-        }
-        di.attributeBeaconParentEffect(cBeacon, parent);
-        const k = 108;
-        for (var i = 0; i < k; i++) {
-          const elt2 = di.makeElementEffect(testFriend.nothing, "li");
-          di.attributeElementParentEffect(elt2, parent);
-        }
-        di.attributeDynParentForBeaconsEffect(
-          newOBeacon,
-          newCBeacon,
-          oBeacon,
-          cBeacon,
-          testFriend.just(2)
-        );
-        expect(getIndex(oBeacon)).toBe(j);
-        expect(getIndex(newOBeacon)).toBe(j + 2 * n + n + 3 * n + n + 1);
-        expect(getIndex(newCBeacon)).toBe(j + 2 * n + n + 3 * n + n + 2);
-        expect(getIndex(cBeacon)).toBe(j + 2 * n + n + 3 * n + n + 3);
-      });
-    });
-    describe("attributeBeaconFullRangeParentEffect", () => {
-      it("correctly inserts all dyn elements into parent", () => {
-        const $ = require("jquery");
-        const parent = di.makeElementEffect(testFriend.nothing, "ul");
-        const j = 7;
-        for (var i = 0; i < j; i++) {
-          const elt2 = di.makeElementEffect(testFriend.nothing, "li");
-          di.attributeElementParentEffect(elt2, parent);
-        }
-        const n = 43;
-        let oBeacon;
-        let cBeacon;
-        const offset = 26;
-        for (var i = 0; i < n; i++) {
-          const od2 = di.makeOpenBeaconEffect();
-          if (i == offset) {
-            oBeacon = od2;
-          }
-          di.attributeBeaconParentEffect(od2, parent);
-          const elt2 = di.makeElementEffect(testFriend.nothing, "li");
-          di.attributeBeaconParentEffect(elt2, parent);
-        }
-        for (var i = 0; i < n; i++) {
-          const elt2 = di.makeElementEffect(testFriend.nothing, "li");
-          di.attributeBeaconParentEffect(elt2, parent);
-          const elt3 = di.makeElementEffect(testFriend.nothing, "li");
-          di.attributeBeaconParentEffect(elt3, parent);
-          const od2 = di.makeCloseBeaconEffect();
-          di.attributeBeaconParentEffect(od2, parent);
-          if (i == n - 1 - offset) {
-            cBeacon = od2;
-          }
-        }
-        const k = 108;
-        for (var i = 0; i < k; i++) {
-          const elt2 = di.makeElementEffect(testFriend.nothing, "li");
-          di.attributeElementParentEffect(elt2, parent);
-        }
-        // new parent
-        const newParent = di.makeElementEffect(testFriend.nothing, "ul");
-        for (var i = 0; i < j; i++) {
-          const elt2 = di.makeElementEffect(testFriend.nothing, "li");
-          di.attributeElementParentEffect(elt2, newParent);
-        }
-        expect(newParent.childNodes.length).toBe(j);
-        di.attributeBeaconFullRangeParentEffect(oBeacon, newParent);
-        expect(getIndex(oBeacon)).toBe(j);
-        const t = n - offset;
-        expect(getIndex(cBeacon)).toBe(j + 5 * t - 1);
-        expect(newParent.lastChild).toEqual(cBeacon);
-      });
-    });
-    describe("attributeDynParentForBeaconFullRangeEffect", () => {
-      it("correctly inserts all dyn elements into parent", () => {
-        const $ = require("jquery");
-        const parent = di.makeElementEffect(testFriend.nothing, "ul");
-        const j = 7;
-        for (var i = 0; i < j; i++) {
-          const elt2 = di.makeElementEffect(testFriend.nothing, "li");
-          di.attributeElementParentEffect(elt2, parent);
-        }
-        const n = 30;
-        let oBeacon;
-        let cBeacon;
-        const offset = 15;
-        for (var i = 0; i < n; i++) {
-          const od2 = di.makeOpenBeaconEffect();
-          if (i == offset) {
-            oBeacon = od2;
-          }
-          di.attributeBeaconParentEffect(od2, parent);
-          const elt2 = di.makeElementEffect(testFriend.nothing, "li");
-          di.attributeBeaconParentEffect(elt2, parent);
-        }
-        for (var i = 0; i < n; i++) {
-          const elt2 = di.makeElementEffect(testFriend.nothing, "li");
-          di.attributeBeaconParentEffect(elt2, parent);
-          const elt3 = di.makeElementEffect(testFriend.nothing, "li");
-          di.attributeBeaconParentEffect(elt3, parent);
-          const od2 = di.makeCloseBeaconEffect();
-          di.attributeBeaconParentEffect(od2, parent);
-          if (i == n - 1 - offset) {
-            cBeacon = od2;
-          }
-        }
-        const k = 108;
-        for (var i = 0; i < k; i++) {
-          const elt2 = di.makeElementEffect(testFriend.nothing, "li");
-          di.attributeElementParentEffect(elt2, parent);
-        }
-        // new parent
-        const newParent = di.makeElementEffect(testFriend.nothing, "ul");
-        const newOBeacon = di.makeOpenBeaconEffect();
-        di.attributeBeaconParentEffect(newOBeacon, newParent);
-        for (var i = 0; i < j; i++) {
-          const elt2 = di.makeElementEffect(testFriend.nothing, "li");
-          di.attributeElementParentEffect(elt2, newParent);
-        }
-        const newCBeacon = di.makeCloseBeaconEffect();
-        di.attributeBeaconParentEffect(newCBeacon, newParent);
-        expect(newParent.childNodes.length).toBe(j + 2); // j + ob + cb
-        di.attributeDynParentForBeaconFullRangeEffect(
-          oBeacon,
-          newOBeacon,
-          newCBeacon,
-          testFriend.just(0)
-        );
-        expect(getIndex(oBeacon)).toBe(1);
-        const t = n - offset;
-        expect(getIndex(cBeacon)).toBe(1 + 5 * t - 1);
-      });
     });
     describe("makeText and setText", () => {
       it("makes text", () => {
-        const t = di.makeTextEffect(testFriend.just("hello"));
+        const t = di.makeTextEffect(
+          testFriend.dummyId,
+          testFriend.just("hello"),
+          testFriend.ignorableBooleanForTextConstructor
+        );
         expect(t.textContent).toBe("hello");
-        di.setTextEffect(t, "goodbye");
+        di.setTextEffect(
+          "goodbye",
+          t,
+          testFriend.ignorableBooleanForTextConstructor
+        );
         expect(t.textContent).toBe("goodbye");
       });
     });
     describe("setProp", () => {
       it("sets the id attribute correctly and unsets it correctly", () => {
         const $ = require("jquery");
-        const elt = di.makeElementEffect(testFriend.nothing, "li");
-        let cache = testFriend.nothing;
-        di.setPropEffect(elt, "id", "foo");
-        di.unsetAttributeEffect(
-          elt,
-          "id",
-          () => cache,
-          () => (cache = nothing)
+        const elt = di.makeElementEffect(
+          testFriend.dummyId,
+          testFriend.nothing,
+          "li"
         );
+        di.setPropEffect("id", "foo", elt);
+        di.unsetAttributeEffect("id", elt);
         expect($(elt).attr("id")).toBe(undefined);
       });
       it("sets checked attribute correctly", () => {
-        const $ = require("jquery");
-        const elt = di.makeElementEffect(testFriend.nothing, "input");
-        di.setPropEffect(elt, "checked", "true");
+        const elt = di.makeElementEffect(
+          testFriend.dummyId,
+          testFriend.nothing,
+          "input"
+        );
+        di.setPropEffect("checked", "true", elt);
         expect(elt.checked).toBe(true);
-        di.setPropEffect(elt, "checked", "false");
+        di.setPropEffect("checked", "false", elt);
         expect(elt.checked).toBe(false);
       });
       it("sets value attribute correctly", () => {
-        const $ = require("jquery");
-        const elt = di.makeElementEffect(testFriend.nothing, "input");
-        di.setPropEffect(elt, "value", "hello");
+        const elt = di.makeElementEffect(
+          testFriend.dummyId,
+          testFriend.nothing,
+          "input"
+        );
+        di.setPropEffect("value", "hello", elt);
         expect(elt.value).toBe("hello");
       });
       it("sets disabled correctly", () => {
-        const $ = require("jquery");
-        const elt = di.makeElementEffect(testFriend.nothing, "button");
-        di.setPropEffect(elt, "disabled", "true");
+        const elt = di.makeElementEffect(
+          testFriend.dummyId,
+          testFriend.nothing,
+          "button"
+        );
+        di.setPropEffect("disabled", "true", elt);
         expect(elt.disabled).toBe(true);
       });
     });
     describe("setCb and unsetAttribute", () => {
       it("sets and unsets the cb", () => {
         const $ = require("jquery");
-        const elt = di.makeElementEffect(testFriend.nothing, "button");
+        const elt = di.makeElementEffect(
+          testFriend.dummyId,
+          testFriend.nothing,
+          "button"
+        );
         let i = 0;
         di.setCbEffect(
-          elt,
           "click",
           () => () => {
             i++;
           },
+          elt
         );
         $(elt).trigger("click");
         expect(i).toBe(1);
         di.setCbEffect(
-          elt,
           "click",
           () => () => {
             i += 42;
           },
+          elt
         );
         $(elt).trigger("click");
         expect(i).toBe(43);
-        di.unsetAttributeEffect(
-          elt,
-          "click",
-        );
+        di.unsetAttributeEffect("click", elt);
         $(elt).trigger("click");
         expect(i).toBe(43);
       });
@@ -1023,27 +282,13 @@ describe("deku", () => {
       (f) =>
         f(tests.dynAppearsCorrectlyAtBeginning, () => {
           const $ = require("jquery");
-          // text, span, start beacon, end beacon, button
-          const base = 5;
-          expect($("#div0").contents().length).toBe(base);
-          expect($($("#div0").contents()[0]).text()).toBe("foo");
-          expect($($("#div0").contents()[base - 4]).text()).toBe("bar");
-          expect($($("#div0").contents()[base - 1]).text()).toBe("incr");
-          $($("#div0").contents()[base - 1]).trigger("click");
-          expect($("#div0").contents().length).toBe(base + 1);
-          // has shifted button by 1
-          expect($($("#div0").contents()[base]).text()).toBe("incr");
-          // there's a new node now with the number "0" as its text
-          expect($($("#div0").contents()[base - 2]).text()).toBe("0");
-          // index is now 5 as it has moved back by 1
-          $($("#div0").contents()[base]).trigger("click");
-          expect($("#div0").contents().length).toBe(base + 2);
-          // has again shifted button by 1
-          expect($($("#div0").contents()[base + 1]).text()).toBe("incr");
-          // there's a new node now with the number "1" as its text
-          expect($($("#div0").contents()[base - 2]).text()).toBe("1");
-          // the old node is to the right of the new node
-          expect($($("#div0").contents()[base - 1]).text()).toBe("0");
+          expect($("#div0").text()).toEqual("foobarincr");
+          $("#incr").trigger("click");
+          expect($("#div0").text()).toEqual("foobar0incr");
+          $("#incr").trigger("click");
+          expect($("#div0").text()).toEqual("foobar10incr");
+          $("#incr").trigger("click");
+          expect($("#div0").text()).toEqual("foobar210incr");
         })
     );
 
@@ -1052,27 +297,13 @@ describe("deku", () => {
       (f) =>
         f(tests.dynAppearsCorrectlyAtEnd, (usingSSR) => {
           const $ = require("jquery");
-          // text, span, start beacon, end beacon, button
-          const base = usingSSR ? 6 : 5;
-          expect($("#div0").contents().length).toBe(base);
-          expect($($("#div0").contents()[0]).text()).toBe("foo");
-          expect($($("#div0").contents()[base - 4]).text()).toBe("bar");
-          expect($($("#div0").contents()[base - 1]).text()).toBe("incr");
-          $($("#div0").contents()[base - 1]).trigger("click");
-          expect($("#div0").contents().length).toBe(base + 1);
-          // has shifted button by 1
-          expect($($("#div0").contents()[base]).text()).toBe("incr");
-          // there's a new node now with the number "0" as its text
-          expect($($("#div0").contents()[base - 2]).text()).toBe("0");
-          // index is now 5 as it has moved back by 1
-          $($("#div0").contents()[base]).trigger("click");
-          expect($("#div0").contents().length).toBe(base + 2);
-          // has again shifted button by 1
-          expect($($("#div0").contents()[base + 1]).text()).toBe("incr");
-          // there's a new node now with the number "1" as its text
-          expect($($("#div0").contents()[base - 1]).text()).toBe("1");
-          // the old node is to the left of the new node
-          expect($($("#div0").contents()[base - 2]).text()).toBe("0");
+          expect($("#div0").text()).toEqual("foobarincr");
+          $("#incr").trigger("click");
+          expect($("#div0").text()).toEqual("foobar0incr");
+          $("#incr").trigger("click");
+          expect($("#div0").text()).toEqual("foobar01incr");
+          $("#incr").trigger("click");
+          expect($("#div0").text()).toEqual("foobar012incr");
         })
     );
 
@@ -1104,7 +335,7 @@ describe("deku", () => {
       })
     );
 
-    doTest("sends to position correctly", (f) =>
+    doTest("sends to position", (f) =>
       f(tests.sendsToPosition, () => {
         const $ = require("jquery");
         expect($("#dyn0").index()).toBeLessThan($("#dyn1").index());
@@ -1136,33 +367,17 @@ describe("deku", () => {
         expect($("#span0").text()).toBe("goodbye");
       })
     );
-
-    doTest("templates work", (f) =>
-      f(tests.templatesWork, () => {
+    doTest("pursx adds listeners 2", (f) =>
+      f(tests.pursXWiresUp2, () => {
         const $ = require("jquery");
-        expect($("#div0").text()).toBe(
-          "hello Helsinkixhello Stockholmxhello Copenhagenx"
-        );
-        $("#Stockholm").trigger("click");
-        expect($("#div0").text()).toBe(
-          "hello Stockholmxhello Helsinkixhello Copenhagenx"
-        );
+        expect($("#span0").text()).toBe("");
+        expect($("#topdiv").attr("class")).toBe("arrrrr");
+        $("#px").trigger("click");
+        expect($("#span0").text()).toBe("hello");
+        $("#inny").trigger("click");
+        expect($("#span0").text()).toBe("goodbye");
       })
     );
-    doTest("templates work 2", (f) =>
-      f(tests.templatesWork2, () => {
-        const $ = require("jquery");
-        expect($("#testing").text()).toBe(
-          "hello world"
-        );
-      })
-    );
-    doTest("ocarina pursx doesn't crash", (f) =>
-      f(tests.ocarinaExample, () => {
-        const $ = require("jquery");
-      })
-    );
-    
     doTest("sends to position correctly when elt is fixed", (f) =>
       f(tests.sendsToPositionFixed, () => {
         const $ = require("jquery");
@@ -1184,7 +399,7 @@ describe("deku", () => {
       })
     );
 
-    doTest("sends to position correctly", (f) =>
+    doTest("sets dyn to initial position correctly", (f) =>
       f(tests.insertsAtCorrectPositions, () => {
         const $ = require("jquery");
         expect($("#dyn0").index()).toBeLessThan($("#dyn1").index());
@@ -1193,6 +408,15 @@ describe("deku", () => {
         expect($("#dyn3").index()).toBeLessThan($("#dyn4").index());
         // for kicks
         expect($("#dyn4").index()).toBeGreaterThan($("#dyn0").index());
+      })
+    );
+
+    doTest("in pure nested dyn disposes correctly", (f) =>
+      f(tests.nestedInPureDyn, () => {
+        const $ = require("jquery");
+        expect($("#div0").text()).toBe("startend");
+        $("#action").trigger("click");
+        expect($("#div0").text()).toBe("start0123end");
       })
     );
 
@@ -1210,6 +434,17 @@ describe("deku", () => {
         expect($("#id0").text()).toBe("2-0");
         expect($("#id1").text()).toBe("2-1");
         expect($("#id2").text()).toBe("2-2");
+      })
+    );
+
+    doTest("pure switcher works", (f) =>
+      f(tests.slightlyLessPureSwitcher, () => {
+        const $ = require("jquery");
+        expect($("#content").text()).toBe("foo4");
+        $("#incr").trigger("click");
+        expect($("#content").text()).toBe("foo5");
+        $("#reset").trigger("click");
+        expect($("#content").text()).toBe("foo4");
       })
     );
 
@@ -1256,16 +491,29 @@ describe("deku", () => {
       })
     );
 
-    doTest("pursx composes", (f) =>
-      f(tests.pursXComposes, () => {
+    doFullTest("empty switches", (f) =>
+      f(tests.emptySwitches, () => {
         const $ = require("jquery");
-        expect($("#div0").text()).toBe("début milieu après-milieu fin");
+        expect($("#content").text()).toBe("0");
+        $("#incr").trigger("click");
+        expect($("#content").text()).toBe("1");
+        $("#incr").trigger("click");
+        expect($("#content").text()).toBe("2");
+        $("#incr").trigger("click");
+        expect($("#content").text()).toBe("3");
+        $("#incr").trigger("click");
+        expect($("#content").text()).toBe("4");
+        $("#incr").trigger("click");
+        expect($("#content").text()).toBe("5");
+        $("#incr").trigger("click");
+        expect($("#content").text()).toBe("0");
       })
     );
 
-    doTest("switcher switches", (f) =>
-      f(tests.switcherSwitches, () => {
+    doTest("filters and refs work correctly", (f) =>
+      f(tests.filtersAndRefs, () => {
         const $ = require("jquery");
+        expect($("#hack").text()).toBe("");
         $("#about-btn").trigger("click");
         expect($("#hack").text()).toBe("hello");
         $("#contact-btn").trigger("click");
@@ -1479,7 +727,7 @@ describe("deku", () => {
         expect($("#hello").text()).toBe("hello");
       })
     );
-    doTest("useRant works", (f) =>
+    doTest("use hot rant works", (f) =>
       f(tests.useHotRantWorks, () => {
         const $ = require("jquery");
         expect($("#da").text()).toBe("1");
@@ -1495,10 +743,17 @@ describe("deku", () => {
         expect($("#db").text()).toBe("4");
       })
     );
-    doTest("stress test doesn't blow up", (f) =>
-      f(tests.stressTest, () => {
+
+    doTest("deterministic unsub", (f) =>
+      f(tests.disposeGetsRun, () => {
         const $ = require("jquery");
-        $("#runlots").trigger("click");
+        expect($("#notthere").length).toBe(1);
+        expect($("#count").text()).toBe("1");
+
+        $("#notthere").trigger("click");
+
+        expect($("#notthere").length).toBe(0); // element is gone so its unsubs should have been called
+        expect($("#count").text()).toBe("2"); // one tick for the init and one tick for the unsub
       })
     );
   });

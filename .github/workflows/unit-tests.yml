@@ -1,8 +1,5 @@
-name: Unit test only
-on:
-  push:
-    branches-ignore:
-      - main
+name: Unit test
+on: push
 jobs:
   container-job:
     runs-on: ubuntu-latest
@@ -23,7 +20,7 @@ jobs:
           key: >-
             ${{ hashFiles('pnpm-lock.yaml') }}-
             ${{ hashFiles('spago.yaml') }}
-      - uses: pnpm/action-setup@v2.2.4
+      - uses: pnpm/action-setup@v4
         name: Install pnpm
         id: pnpm-install
         with:

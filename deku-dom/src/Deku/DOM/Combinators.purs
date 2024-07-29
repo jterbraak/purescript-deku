@@ -3,42 +3,34 @@ module Deku.DOM.Combinators where
 import Prelude
 
 import Data.Foldable (for_)
+import Data.Maybe (Maybe)
 import Data.Symbol (class IsSymbol, reflectSymbol)
 import Deku.Attribute (Attribute, unsafeAttribute, unset')
 import Deku.DOM.Self as Self
-import Deku.Some (class IsSubsetRL)
-import Deku.Some as Some
 import Effect (Effect)
 import Effect.Aff (Milliseconds(..), delay, launchAff_)
 import Effect.Class (liftEffect)
 import Prim.Row as Row
-import Prim.RowList as RL
 import Type.Proxy (Proxy(..))
 import Web.DOM (Element)
 import Web.Event.Event as Web
-import Web.HTML.HTMLInputElement as IE
-import Web.HTML.HTMLTextAreaElement as TAE
+import Web.Event.EventTarget (EventTarget)
 import Web.HTML.HTMLInputElement (checked, fromEventTarget, value, valueAsNumber)
+import Web.HTML.HTMLSelectElement as SE
 
-templated_
-  :: forall f r sr rl x
-   . Functor f
-  => RL.RowToList r rl
-  => IsSubsetRL rl sr
-  => f x
-  -> Record r
-  -> f (Some.Some sr)
-templated_ e v = e <#> \_ -> Some.inj v
-
-templatedMap_
-  :: forall f a r sr rl
-   . Functor f
-  => RL.RowToList r rl
-  => IsSubsetRL rl sr
-  => f a
-  -> (a -> Record r)
-  -> f (Some.Some sr)
-templatedMap_ e v = e <#> \i -> Some.inj (v i)
+transformOn
+  :: ∀ a b r f
+   . Functor f =>
+     { fromEventTarget :: EventTarget -> Maybe a
+     , value           :: a -> Effect b
+     }
+  -> (f (Web.Event -> Effect Unit) -> f (Attribute r))
+  -> f (b -> Effect Unit)
+  -> f (Attribute r)
+transformOn { fromEventTarget, value } listener =
+  listener <<< map \push e ->
+    for_ (Web.target e >>= fromEventTarget)
+       $ value >=> push
 
 -- | Runs an effect when the element triggers the given event. 
 runOn
@@ -67,9 +59,8 @@ checkedOn
   => (f (Web.Event -> Effect Unit) -> f (Attribute r))
   -> f (Boolean -> Effect Unit)
   -> f (Attribute r)
-checkedOn listener =
-  listener <<< map \push e -> for_ (Web.target e >>= fromEventTarget) $ checked
-    >=> push
+checkedOn =
+  transformOn { fromEventTarget, value: checked }
 
 -- | Shorthand version of `checkedOn`.
 checkedOn_
@@ -88,9 +79,8 @@ numberOn
   => (f (Web.Event -> Effect Unit) -> f (Attribute r))
   -> f (Number -> Effect Unit)
   -> f (Attribute r)
-numberOn listener =
-  listener <<< map \push e -> for_ (Web.target e >>= fromEventTarget) $
-    valueAsNumber >=> push
+numberOn =
+  transformOn { fromEventTarget, value: valueAsNumber }
 
 -- | Shorthand version of `numberOn`.
 numberOn_
@@ -109,9 +99,8 @@ valueOn
   => (f (Web.Event -> Effect Unit) -> f (Attribute r))
   -> f (String -> Effect Unit)
   -> f (Attribute r)
-valueOn listener =
-  listener <<< map \push e -> for_ (Web.target e >>= fromEventTarget) $ value
-    >=> push
+valueOn =
+  transformOn { fromEventTarget, value }
 
 -- | Shorthand version of `valueOn`.
 valueOn_
@@ -122,6 +111,26 @@ valueOn_
   -> f (Attribute r)
 valueOn_ listener =
   valueOn listener <<< pure
+
+-- | Runs an effect with the `value` property of the target select element when it triggers the given event.
+selectOn
+  :: forall r f
+   . Functor f
+  => (f (Web.Event -> Effect Unit) -> f (Attribute r))
+  -> f (String -> Effect Unit)
+  -> f (Attribute r)
+selectOn =
+  transformOn { fromEventTarget: SE.fromEventTarget, value: SE.value }
+
+-- | Shorthad version of `selectOn`.
+selectOn_
+  :: forall r f
+   . Applicative f
+  => (f (Web.Event -> Effect Unit) -> f (Attribute r))
+  -> (String -> Effect Unit)
+  -> f (Attribute r)
+selectOn_ listener =
+  selectOn listener <<< pure
 
 -- | Converts an `Attribute` constructor to an `Attribute` unsetter.
 -- | 
